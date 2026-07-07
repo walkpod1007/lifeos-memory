@@ -7,9 +7,9 @@
 - 🗣「未讀信哪些要回？」→ 分好優先級擺在你面前
 - 🗣「客廳燈調閱讀模式、掃地機掃廚房」→ 全屋家電聽得懂人話
 
-38 個 skills，全部從一套天天在跑的個人自動化系統（Life-OS）長出來。
+35 個 skills，全部從一套天天在跑的個人自動化系統（Life-OS）長出來。
 
-> 38 production-grown Claude Code agent skills. Docs in Traditional Chinese; each skill is self-describing via its `SKILL.md`.
+> 35 production-grown Claude Code agent skills. Docs in Traditional Chinese; each skill is self-describing via its `SKILL.md`.
 
 ## 為什麼跟網路上的 skill 合集不一樣
 
@@ -38,8 +38,6 @@
 **📬 日常整理**
 - 「看一下我的未讀信，哪些要回？」→ `gmail-triage` 分優先級，錢到了沒、貨出了沒優先標出
 - 「明天行事曆有什麼？幫我加一個週五交稿的 task」→ `gog`（Gmail/Calendar/Tasks/Sheets/Drive 一支 CLI）
-- 「這個網址存起來」→ `capture` 抓文摘、歸檔、建知識條目
-- 「記一下：客戶說月底前要看到樣品」→ `obsidian-capture` 自動歸類進 Vault
 
 **🏠 智慧家庭（有對應硬體才需要）**
 - 「客廳燈調成閱讀情境」→ `openhue`；「掃一下廚房」→ `roborock`；「電視切 HDMI 2」→ `samsung-smartthings`；「放點爵士」→ `sonoscli`；講不清楚是哪台就丟給 `smart-home` 統一路由
@@ -116,7 +114,7 @@ tar xzf lifeos-skills-*.tgz -C ~/.claude/
 `yt-dub`、`yt-sub-translate`、`yt-relay-translate`、`kindle-translate`（yt-dlp / ffmpeg / whisper）、`mac-health`、`cloudflared-tunnel`、`clone-website`、`carousel-gen`、`gdoc-article`
 
 **要帶自己的 API key 或帳號**
-`imagen-gen`、`codex-image`、`mini-agent`（各家生成模型的 key）、`gog`、`gmail-triage`（Google OAuth）、`obsidian-capture`、`vault-ops`、`capture`（本機 Obsidian Vault）
+`imagen-gen`、`codex-image`、`mini-agent`（各家生成模型的 key）、`gog`、`gmail-triage`（Google OAuth）
 
 **要有對應硬體**
 `openhue`（Philips Hue Bridge）、`roborock`、`samsung-smartthings`、`sonoscli`、`xiaomi-home`、`smart-home`（統一入口）
