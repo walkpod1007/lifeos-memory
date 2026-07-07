@@ -5,11 +5,11 @@
 - 🗣「幫我做一張講座海報」→ 幾分鐘後拿到成品 PDF
 - 🗣「這支 YouTube 翻成日韓英泰字幕、傳回頻道」→ 一句話跑完整條管線
 - 🗣「未讀信哪些要回？」→ 分好優先級擺在你面前
-- 🗣「客廳燈調閱讀模式、掃地機掃廚房」→ 全屋家電聽得懂人話
+- 🗣「逆向這個網站的設計，給我一份 design tokens」→ 結構化 DESIGN.md 到手
 
-35 個 skills，全部從一套天天在跑的個人自動化系統（Life-OS）長出來。
+29 個 skills，全部從一套天天在跑的個人自動化系統（Life-OS）長出來。
 
-> 35 production-grown Claude Code agent skills. Docs in Traditional Chinese; each skill is self-describing via its `SKILL.md`.
+> 29 production-grown Claude Code agent skills. Docs in Traditional Chinese; each skill is self-describing via its `SKILL.md`.
 
 ## 為什麼跟網路上的 skill 合集不一樣
 
@@ -38,9 +38,6 @@
 **📬 日常整理**
 - 「看一下我的未讀信，哪些要回？」→ `gmail-triage` 分優先級，錢到了沒、貨出了沒優先標出
 - 「明天行事曆有什麼？幫我加一個週五交稿的 task」→ `gog`（Gmail/Calendar/Tasks/Sheets/Drive 一支 CLI）
-
-**🏠 智慧家庭（有對應硬體才需要）**
-- 「客廳燈調成閱讀情境」→ `openhue`；「掃一下廚房」→ `roborock`；「電視切 HDMI 2」→ `samsung-smartthings`；「放點爵士」→ `sonoscli`；講不清楚是哪台就丟給 `smart-home` 統一路由
 
 **🔧 工程與運維**
 - 「這個 repo 幫我做一次程式碼健檢」→ `code-audit` 架構掃描＋批次審計＋匯報
@@ -114,10 +111,10 @@ tar xzf lifeos-skills-*.tgz -C ~/.claude/
 `yt-dub`、`yt-sub-translate`、`yt-relay-translate`、`kindle-translate`（yt-dlp / ffmpeg / whisper）、`mac-health`、`cloudflared-tunnel`、`clone-website`、`carousel-gen`、`gdoc-article`
 
 **要帶自己的 API key 或帳號**
-`imagen-gen`、`codex-image`、`mini-agent`（各家生成模型的 key）、`gog`、`gmail-triage`（Google OAuth）
+`codex-image`、`mini-agent`（各家生成模型的 key）、`gog`、`gmail-triage`（Google OAuth）
 
 **要有對應硬體**
-`openhue`（Philips Hue Bridge）、`roborock`、`samsung-smartthings`、`sonoscli`、`xiaomi-home`、`smart-home`（統一入口）
+`sonoscli`（Sonos 音響）
 
 ## 佔位符對照
 
@@ -138,4 +135,4 @@ tar xzf lifeos-skills-*.tgz -C ~/.claude/
 
 - 這些 skill 從一套活的個人系統萃取，內文帶有原系統的路徑與流程慣例；不合用的地方直接改 `SKILL.md`，它就是普通 Markdown。
 - 出包前經過自動 scrub 與 release gate（無真實 ID、email、私鑰、內網位址殘留）；若仍發現任何殘留，請開 issue 回報。
-- 各 skill 引用的外部工具（yt-dlp、ffmpeg、openhue CLI 等）授權依其原專案；本包內容依 repo 的 LICENSE。
+- 各 skill 引用的外部工具（yt-dlp、ffmpeg 等）授權依其原專案；本包內容依 repo 的 LICENSE。
