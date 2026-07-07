@@ -1,17 +1,58 @@
 # Life-OS Skills — Claude Code 技能包
 
-50 個生產環境長出來的 [Claude Code](https://claude.com/claude-code) agent skills：視覺與文件產出、YouTube/電子書翻譯管線、LINE bot 對話框架、智慧家庭 CLI、Google Workspace 整合、以及一套「skill 工程」方法論（怎麼寫 skill、審 skill、把 SOP 蒸餾成 skill）。
+50 個從一套天天在跑的個人自動化系統長出來的 [Claude Code](https://claude.com/claude-code) agent skills。不是範例代碼，是實際用了幾個月、踩過坑修過版的工作流程。
 
-> This is a set of 50 Claude Code agent skills extracted from a personal Life-OS. Docs are in Traditional Chinese; each skill is self-describing via its `SKILL.md`.
+> 50 production-grown Claude Code agent skills. Docs in Traditional Chinese; each skill is self-describing via its `SKILL.md`.
 
-## 適用場景
+## 裝完你可以直接這樣說
 
-你有一台 Mac（全新或現役皆可），想在本機跑 Claude Code，並一次給它裝上一批現成能力。所有 skill 都在本機執行，不需要伺服器。
+技能裝好後不用學指令，在 `claude` 對話裡用人話講需求就會觸發。實際場景：
 
-依你的起點走對應路徑：
+**🎨 做視覺、做文件**
+- 「幫我做一張講座海報，主題是 AI 時代的手工價值」→ `canvas-design` 用設計哲學推導版面與配色，輸出 PNG/PDF，字型庫自帶
+- 「把這篇文案做成 IG 九宮格」→ `carousel-gen` 產出風格一致的輪播圖
+- 「這份報告幫我套個專業配色」→ `theme-factory` 十組預置主題挑一組或現場生成
+- 「逆向這個網站的設計，給我一份 design tokens」→ `design-extract` 產出結構化 DESIGN.md
 
-- **已經在用 Claude Code** → 直接跳〔路徑 B〕，一行解壓就裝完
-- **全新的 Mac、什麼都還沒裝** → 從〔路徑 A〕開始，十分鐘內帶到技能生效
+**📺 YouTube／翻譯管線**
+- 「把這支影片的字幕翻成日韓英泰四語並傳回頻道」→ `yt-sub-translate` 一條龍
+- 「幫這支影片生成日語配音軌」→ `yt-dub` 從 SRT 到 edge-tts 到 ffmpeg 組軌上傳
+- 「我想做一支『無臉頻道』影片，從選題幫我推到可拍腳本」→ `yt-script` 先逆向競品頻道再代寫
+- 「這本日文電子書翻成繁中」→ `kindle-translate`
+
+**📬 日常整理**
+- 「看一下我的未讀信，哪些要回？」→ `gmail-triage` 分優先級，錢到了沒、貨出了沒優先標出
+- 「明天行事曆有什麼？幫我加一個週五交稿的 task」→ `gog`（Gmail/Calendar/Tasks/Sheets/Drive 一支 CLI）
+- 「這個網址存起來」→ `capture` 抓文摘、歸檔、建知識條目
+- 「記一下：客戶說月底前要看到樣品」→ `obsidian-capture` 自動歸類進 Vault
+
+**🏠 智慧家庭（有對應硬體才需要）**
+- 「客廳燈調成閱讀情境」→ `openhue`；「掃一下廚房」→ `roborock`；「電視切 HDMI 2」→ `samsung-smartthings`；「放點爵士」→ `sonoscli`；講不清楚是哪台就丟給 `smart-home` 統一路由
+
+**🔧 工程與運維**
+- 「這個 repo 幫我做一次程式碼健檢」→ `code-audit` 架構掃描＋批次審計＋匯報
+- 「服務報 502 了」→ `runbook` 自動查 log、定位、輸出結構化報告
+- 「我的 Mac 最近怪怪的」→ `mac-health` 本機健檢
+- 「這個長任務不要燒 Claude 額度」→ `mini-agent` 派給便宜模型跑
+
+**🧬 造技能的技能（本包的私房菜）**
+- 「把我這份 SOP 文件變成一個 skill」→ `doc-to-skill` 蒸餾成正式 SKILL.md
+- 「幫我從零做一個 XX skill」→ `skill-author` 標準流程含紅隊審查
+- 「網路上抓的這個 skill 安全嗎？」→ `skill-vetting` 審查後才格式化安裝
+- 用這三個，你自己的工作流程也能長成自己的技能包
+
+## 不裝 LINE 也完全沒關係
+
+50 個技能裡只有 12 個屬於 LINE bot 框架（`line-*`、`tier1-line-bootstrap` 等），**其餘 38 個跟 LINE 零關係**。不設定 LINE 技能就是放著，不影響其他任何技能運作。想做 LINE bot 的人才需要看〔LINE bot 框架〕那節。
+
+## 在哪裡能用
+
+| 環境 | 能用嗎 |
+|---|---|
+| Claude Code CLI（終端機 `claude`） | ✅ |
+| Claude 桌面 App 內建的 Claude Code | ✅ 同一個 `~/.claude/skills`，裝一次兩邊生效 |
+| VS Code / JetBrains 的 Claude Code 插件 | ✅ 同上 |
+| claude.ai 網頁對話 | ❌ 這批技能大多要跑本機工具（ffmpeg、家電 CLI、本機檔案），網頁沙箱摸不到你的機器 |
 
 ## 路徑 A — 全新 Mac 從零開始
 
@@ -69,7 +110,7 @@ tar xzf lifeos-skills-*.tgz -C ~/.claude/
 **要有對應硬體**
 `openhue`（Philips Hue Bridge）、`roborock`、`samsung-smartthings`、`sonoscli`、`xiaomi-home`、`smart-home`（統一入口）
 
-**LINE bot 框架**（見下節）
+**LINE bot 框架**（選配，見下節）
 `line-dispatcher`、`line-behavior`、`line-output`、`line-health`、`line-media`、`line-stt`、`line-tts`、`line-session-check`、`tier1-line-bootstrap`、`switch-channel-model`、`safe-restart`、`session-end`
 
 ## 佔位符對照
