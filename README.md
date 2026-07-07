@@ -1,8 +1,8 @@
 # Life-OS Skills — Claude Code 技能包
 
-50 個從一套天天在跑的個人自動化系統長出來的 [Claude Code](https://claude.com/claude-code) agent skills。不是範例代碼，是實際用了幾個月、踩過坑修過版的工作流程。
+38 個從一套天天在跑的個人自動化系統長出來的 [Claude Code](https://claude.com/claude-code) agent skills。不是範例代碼，是實際用了幾個月、踩過坑修過版的工作流程。
 
-> 50 production-grown Claude Code agent skills. Docs in Traditional Chinese; each skill is self-describing via its `SKILL.md`.
+> 38 production-grown Claude Code agent skills. Docs in Traditional Chinese; each skill is self-describing via its `SKILL.md`.
 
 ## 裝完你可以直接這樣說
 
@@ -40,10 +40,6 @@
 - 「幫我從零做一個 XX skill」→ `skill-author` 標準流程含紅隊審查
 - 「網路上抓的這個 skill 安全嗎？」→ `skill-vetting` 審查後才格式化安裝
 - 用這三個，你自己的工作流程也能長成自己的技能包
-
-## 不裝 LINE 也完全沒關係
-
-50 個技能裡只有 12 個屬於 LINE bot 框架（`line-*`、`tier1-line-bootstrap` 等），**其餘 38 個跟 LINE 零關係**。不設定 LINE 技能就是放著，不影響其他任何技能運作。想做 LINE bot 的人才需要看〔LINE bot 框架〕那節。
 
 ## 在哪裡能用
 
@@ -110,26 +106,20 @@ tar xzf lifeos-skills-*.tgz -C ~/.claude/
 **要有對應硬體**
 `openhue`（Philips Hue Bridge）、`roborock`、`samsung-smartthings`、`sonoscli`、`xiaomi-home`、`smart-home`（統一入口）
 
-**LINE bot 框架**（選配，見下節）
-`line-dispatcher`、`line-behavior`、`line-output`、`line-health`、`line-media`、`line-stt`、`line-tts`、`line-session-check`、`tier1-line-bootstrap`、`switch-channel-model`、`safe-restart`、`session-end`
-
 ## 佔位符對照
 
 打包時已把原系統的識別資訊換成佔位符，用到相關 skill 時替換成你自己的：
 
 | 佔位符 | 換成什麼 |
 |---|---|
-| `<LINE_USER_ID>` / `<LINE_GROUP_ID>` / `<LINE_ROOM_ID>` | 你的 LINE Messaging API 識別碼 |
 | `user@example.com` / `user2@example.com` | 你的 email |
 | `<YOUR_DOMAIN>` | 你的網域（webhook / tunnel 用） |
 | `<LAN_IP>` | 你的內網設備 IP |
 | `$HOME` | 多數情境 shell 會自動展開，寫死處換成你的家目錄 |
 
-## 關於 LINE bot 整組 skill
+## Roadmap
 
-這組是本包最完整的資產：一個以 Claude Code session 為「大腦」的 LINE bot 架構——`line-dispatcher` 解析事件路由、`line-media`/`line-stt`/`line-tts` 處理多媒體、`line-behavior` 定義社交行為、`tier1-line-bootstrap` 端到端建新群組 session。
-
-**注意**：完整運行還需要三樣本包沒有的東西——LINE Messaging API channel（去 LINE Developers 申請）、把 webhook 打回本機的 tunnel（`cloudflared-tunnel` skill 有教）、以及把訊息餵進 Claude Code 的 MCP server 與 supervisor 腳本（屬於 harness 層，計畫另出 `lifeos-harness` 包）。在那之前，這組 skill 可當成完整的架構參考來讀與改作。
+原系統還有一組以 Claude Code session 為「大腦」的 LINE bot 框架（事件路由、語音轉文字、TTS、多群組 session 管理），與其依賴的 harness 層（supervisor / watchdog / handoff 三件套）。這兩塊計畫整理好後另行發布。
 
 ## 已知邊界
 
