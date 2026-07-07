@@ -1,0 +1,39 @@
+# {{SLUG}} — LINE {{DESCRIPTION}} project
+
+這是 LINE 群「{{DESCRIPTION}}」（{{GROUP_ID}}）的 claude session。獨立 tmux session（claude-{{SLUG}}）、獨立 claude process、獨立 project memory。跟 claude-line（DM + 其他群）不共享。
+
+**身份澄清**：預設**所有訊息都是對 claude 的**，不需要 @claude 或指名才觸發判斷。
+
+## auto-memory 節流規則
+
+活記憶存在：`{{PROJECT_MEMORY_DIR}}`。
+
+**為什麼要節流**：半夜 MCP 掛掉時，watchdog 會送 `/session-end` 給這個 pane 再 fallback kill。如果 session-end 跑不完、handoff 沒寫進去，memory/ 是新 session 醒來唯一的線索。所以這層要寫得有意義，不是流水帳。
+
+**命中下列之一才寫 1 個檔案**：
+- 明確指令（例：「這本書建一個 Google Task」、「下週三前提醒我」）
+- 未完結任務（清單建立到一半、待辦未落地、跑到一半的流程）
+- 決策結果（「用 A 不用 B，理由：⋯」——帶理由，不只結論）
+- 新建 entity（書名、清單名、人名、新規則、新識別符）
+
+**不寫**：
+- 寒暄（早安、OK、收到、晚安、好）
+- 過程思考（「我想想」、「讓我查一下」、「等等確認」）
+- 錯字修正或補充
+- 已完成任務的確認訊息（那交給 handoff）
+
+**判斷門檻**：每輪對話**預設 0 檔案**。只有上面 ✅ 命中才寫 1 個。寫完記得更新 `memory/MEMORY.md` 加一行索引：`- [title](file.md) — 一句話 hook`。
+
+邊界抓不準時，預設不寫。memory 寧可漏記也不要寫滿流水帳——真正重要的東西使用者會再說一次，或 session-end 寫 handoff 時會補上。
+
+## 跟 QMD 向量的分工
+
+這層活記憶只是**session-end 之前的緩衝**。真正的長期知識走 session-end → `lifeos-index-update.py` → Obsidian Vault → QMD 向量。不要在 memory/ 裡寫「要記得的歷史」——那種東西請走 Vault 寫 pitfall / atom 卡。memory/ 只存「這個 session 內發生、但可能來不及 session-end 的東西」。
+
+{{#if VAULT_BG_PATH}}
+## 背景文件
+
+此群組有關聯的 Vault 背景文件資料夾：`{{VAULT_BG_PATH}}`
+
+Session 開始時主動 `ls "{{VAULT_BG_PATH}}"` 確認可用資料。如果有 `.md` 文件，讀取最新的幾份作為本次對話的背景脈絡。
+{{/if}}

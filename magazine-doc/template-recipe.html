@@ -1,0 +1,478 @@
+<title>一鍋到底 × 5</title>
+<style>
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: #FAF6EF;
+    color: #2A2724;
+    font-family: "PingFang TC", "Noto Sans TC", sans-serif;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .page {
+    width: 210mm;
+    height: 297mm;
+    position: relative;
+    overflow: hidden;
+    background: #FAF6EF;
+    page-break-after: always;
+  }
+  .page:last-child { page-break-after: auto; }
+
+  .serif { font-family: "Noto Serif TC", "Songti TC", "STSong", serif; }
+
+  /* ---------- COVER ---------- */
+  .cover { display: flex; flex-direction: column; align-items: center; padding: 20mm 18mm 14mm; text-align: center; }
+  .cover .kicker {
+    font-size: 13px; letter-spacing: 6px; color: #C4572E; font-weight: 600;
+    margin-top: 8mm; margin-bottom: 6mm;
+  }
+  .cover .title {
+    font-size: 84px; font-weight: 700; color: #2A2724; line-height: 1.1; margin: 0;
+  }
+  .cover .subtitle {
+    font-size: 18px; letter-spacing: 3px; color: #C4572E; margin-top: 6mm; font-weight: 600;
+  }
+  .cover .tagline {
+    font-size: 16px; color: #5C574F; margin-top: 8mm; font-style: italic;
+  }
+  .cover .divider {
+    width: 60px; height: 2px; background: #C4572E; margin: 10mm 0 8mm;
+  }
+  .cover .index {
+    width: 100%; max-width: 150mm; text-align: left; margin-top: 2mm;
+  }
+  .cover .index-row {
+    display: flex; align-items: center; gap: 6mm;
+    padding: 4mm 0; border-bottom: 1px solid #E4DDCD;
+  }
+  .cover .index-row:first-child { border-top: 1px solid #E4DDCD; }
+  .cover .index-thumb {
+    width: 20mm; height: 20mm; border-radius: 3px; object-fit: cover; flex-shrink: 0;
+    box-shadow: 0 2px 6px rgba(42,39,36,0.15);
+  }
+  .cover .index-num {
+    font-size: 22px; color: #C4572E; font-weight: 700; width: 12mm; flex-shrink: 0;
+  }
+  .cover .index-name { flex: 1; font-size: 16px; font-weight: 600; text-align: left; }
+  .cover .index-page { font-size: 13px; color: #9A9284; width: 14mm; text-align: right; }
+  .cover .footer {
+    margin-top: auto; padding-top: 8mm;
+    font-size: 11px; letter-spacing: 2px; color: #9A9284;
+  }
+
+  /* ---------- RECIPE PAGE ---------- */
+  .recipe { display: flex; flex-direction: column; }
+  .hero-wrap {
+    position: relative; width: 100%; height: 116mm; overflow: hidden; flex-shrink: 0;
+    background: #EEF1EA;
+  }
+  .hero-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .hero-wrap.no-image {
+    display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, #EEF1EA 0%, #E4DDCD 100%);
+  }
+  .hero-wrap.no-image .placeholder-num {
+    font-size: 180px; color: rgba(196,87,46,0.35); font-weight: 700;
+  }
+  .num-overlay {
+    position: absolute; top: 6mm; left: 10mm;
+    font-size: 108px; font-weight: 700; color: rgba(255,255,255,0.92);
+    text-shadow: 0 3px 14px rgba(0,0,0,0.45);
+    line-height: 1;
+  }
+  .head-block { padding: 5mm 14mm 2mm; flex-shrink: 0; }
+  .dish-name { font-size: 32px; font-weight: 700; margin: 0; line-height: 1.25; }
+  .dish-tagline { font-size: 12.5px; color: #6E685E; font-style: italic; margin-top: 2mm; line-height: 1.5; }
+
+  .body-cols { display: flex; flex: 1; padding: 1mm 14mm 2mm; gap: 6mm; min-height: 0; }
+
+  .col-ingredients {
+    width: 40%; flex-shrink: 0; background: #EEF1EA; border-radius: 4px;
+    padding: 4mm 5mm 4mm; align-self: flex-start;
+  }
+  .col-ingredients h3 {
+    font-size: 13px; color: #7A8B6F; margin: 0 0 2.5mm; letter-spacing: 2px;
+    font-weight: 700; text-transform: uppercase;
+  }
+  .col-ingredients ul { list-style: none; margin: 0; padding: 0; }
+  .col-ingredients li {
+    font-size: 11px; line-height: 1.4; padding: 0.8mm 0 0.8mm 4mm; position: relative;
+    border-bottom: 1px dashed #D9DCCF;
+  }
+  .col-ingredients li:last-child { border-bottom: none; }
+  .col-ingredients li::before {
+    content: "●"; color: #C4572E; font-size: 6px; position: absolute; left: 0; top: 2.6mm;
+  }
+  .tag-row { margin-top: 3mm; display: flex; flex-direction: column; gap: 1.5mm; }
+  .tag {
+    display: inline-block; font-size: 10px; background: #FFFFFF; color: #7A8B6F;
+    border: 1px solid #C7D0BC; border-radius: 20px; padding: 1mm 2.6mm; width: fit-content;
+  }
+
+  .col-steps { flex: 1; min-width: 0; }
+  .col-steps h3 {
+    font-size: 13px; color: #C4572E; margin: 0 0 2.5mm; letter-spacing: 2px;
+    font-weight: 700; text-transform: uppercase;
+  }
+  .step { display: flex; gap: 3.5mm; margin-bottom: 2.6mm; align-items: flex-start; }
+  .step-num {
+    flex-shrink: 0; width: 7mm; height: 7mm; border-radius: 50%; background: #C4572E;
+    color: #FAF6EF; font-size: 12px; font-weight: 700; display: flex; align-items: center;
+    justify-content: center; margin-top: 0.5mm;
+  }
+  .step-text { font-size: 12px; line-height: 1.55; padding-top: 0.5mm; }
+  .step-note {
+    font-size: 11px; color: #6E685E; margin-top: 1.5mm; padding: 2.5mm; background: #F3EEE3;
+    border-left: 3px solid #C4572E; border-radius: 2px; line-height: 1.5;
+  }
+
+  .footer-bar {
+    flex-shrink: 0; margin-top: auto; padding: 3mm 14mm 4mm;
+    border-top: 1px solid #E4DDCD;
+  }
+  .source-row {
+    display: flex; justify-content: space-between; align-items: flex-end; gap: 4mm;
+  }
+  .source-text { font-size: 10.5px; color: #6E685E; line-height: 1.5; }
+  .source-text b { color: #2A2724; }
+  .page-num { font-size: 16px; font-weight: 700; color: #C4572E; flex-shrink: 0; }
+</style>
+
+<!-- ============ PAGE 1 : COVER ============ -->
+<div class="page cover">
+  <div class="kicker">APU KITCHEN ARCHIVE</div>
+  <h1 class="title serif">一鍋到底</h1>
+  <div class="subtitle">ONE-POT × 5 週間食譜特輯</div>
+  <div class="tagline">一只鍋，五道菜，洗碗槽的自由。</div>
+  <div class="divider"></div>
+
+  <div class="index">
+    <div class="index-row">
+      <img class="index-thumb" src="img/01-pasta.png" alt="一鍋到底義大利麵">
+      <div class="index-num serif">01</div>
+      <div class="index-name serif">一鍋到底義大利麵</div>
+      <div class="index-page">P.02</div>
+    </div>
+    <div class="index-row">
+      <img class="index-thumb" src="img/02-curry.png" alt="無水咖喱飯">
+      <div class="index-num serif">02</div>
+      <div class="index-name serif">無水咖喱飯（電子鍋）</div>
+      <div class="index-page">P.03</div>
+    </div>
+    <div class="index-row">
+      <img class="index-thumb" src="img/03-chicken.png" alt="番茄起司燉雞">
+      <div class="index-num serif">03</div>
+      <div class="index-name serif">番茄起司燉雞</div>
+      <div class="index-page">P.04</div>
+    </div>
+    <div class="index-row">
+      <img class="index-thumb" src="img/04-kakuni.png" alt="入味五花肉捲角煮">
+      <div class="index-num serif">04</div>
+      <div class="index-name serif">入味五花肉捲角煮</div>
+      <div class="index-page">P.05</div>
+    </div>
+    <div class="index-row">
+      <img class="index-thumb" src="img/05-shakshuka.png" alt="北非蛋">
+      <div class="index-num serif">05</div>
+      <div class="index-name serif">北非蛋（蕃茄牛肉燉蛋）</div>
+      <div class="index-page">P.06</div>
+    </div>
+  </div>
+
+  <div class="footer">APU KITCHEN ARCHIVE · 2026.07 · 選自阿普 Vault 食譜庫</div>
+</div>
+
+<!-- ============ PAGE 2 : 01 一鍋到底義大利麵 ============ -->
+<div class="page recipe">
+  <div class="hero-wrap">
+    <img src="img/01-pasta.png" alt="一鍋到底義大利麵">
+    <div class="num-overlay serif">01</div>
+  </div>
+  <div class="head-block">
+    <h2 class="dish-name serif">一鍋到底義大利麵</h2>
+    <div class="dish-tagline">省掉煮麵、煮醬、炒麵三個鍋子，所有材料下鍋蓋蓋燜煮 20 分鐘，下班回家休息一下就能吃到義大利麵。</div>
+  </div>
+  <div class="body-cols">
+    <div class="col-ingredients">
+      <h3 class="serif">食材</h3>
+      <ul>
+        <li>義大利麵 2 人份</li>
+        <li>蘑菇 65g</li>
+        <li>九層塔 1 把</li>
+        <li>蕃茄丁 1 顆量</li>
+        <li>洋蔥絲 半顆</li>
+        <li>奶油乳酪 60-80g</li>
+        <li>義大利麵醬 120g</li>
+        <li>初榨橄欖油 2 大匙</li>
+        <li>牛奶或鮮奶油 200ml</li>
+        <li>水 300ml（能略為蓋過麵條即可）</li>
+        <li>鹽巴 1 茶匙</li>
+        <li>起司粉 2 大匙</li>
+      </ul>
+      <div class="tag-row">
+        <span class="tag">⏱ 時間：25 分鐘</span>
+        <span class="tag">🍳 鍋具：深鍋（一鍋到底）</span>
+      </div>
+    </div>
+    <div class="col-steps">
+      <h3 class="serif">作法</h3>
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-text">除了鹽巴跟起司粉以外的所有材料放入鍋中。</div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-text">加蓋中火煮 20 分鐘。</div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-text">開蓋，用起司粉跟鹽巴調整到喜歡的鹹度即完成。</div>
+      </div>
+    </div>
+  </div>
+  <div class="footer-bar">
+    <div class="source-row">
+      <div class="source-text">
+        <b>IG</b> @woodywoody315（Woody 屋底下的廚房） · Vault 收藏 2026-07-02<br>
+        <b>▶ YouTube 示範：</b>一鍋到底懶人義大利麵【造咖】 https://youtu.be/wXVnHKDsio8
+      </div>
+      <div class="page-num serif">02</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ PAGE 3 : 02 無水咖喱飯（電子鍋） ============ -->
+<div class="page recipe">
+  <div class="hero-wrap">
+    <img src="img/02-curry.png" alt="無水咖喱飯">
+    <div class="num-overlay serif">02</div>
+  </div>
+  <div class="head-block">
+    <h2 class="dish-name serif">無水咖喱飯（電子鍋）</h2>
+    <div class="dish-tagline">洋蔥、番茄、絞肉、咖哩塊全丟進電子鍋按下煮飯鍵，不用顧火、不用切炒，煮好攪拌均勻即成無水咖喱。</div>
+  </div>
+  <div class="body-cols">
+    <div class="col-ingredients">
+      <h3 class="serif">食材</h3>
+      <ul>
+        <li>洋蔥 2 顆</li>
+        <li>番茄 3 顆</li>
+        <li>絞肉 1 盒</li>
+        <li>咖哩塊 半塊</li>
+        <li>即食白飯：全聯「珍苑蒸熟飯」（一盒 200g，微波 1 分鐘即食）</li>
+      </ul>
+      <div class="tag-row">
+        <span class="tag">⏱ 時間：懶人級・免炒免顧火</span>
+        <span class="tag">🍳 鍋具：電子鍋</span>
+      </div>
+    </div>
+    <div class="col-steps">
+      <h3 class="serif">作法</h3>
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-text">兩顆洋蔥、三顆番茄、一盒絞肉、半塊咖哩全部放入電子鍋。</div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-text">按下正常煮飯模式（無水，靠食材本身水分燜煮）。</div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-text">煮好後攪拌均勻即完成無水咖喱。</div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-text">白飯改用即食「珍苑蒸熟飯」微波 1 分鐘，不用洗米泡水。</div>
+      </div>
+    </div>
+  </div>
+  <div class="footer-bar">
+    <div class="source-row">
+      <div class="source-text">
+        <b>IG</b> @feimei_eat（Fifi食旅｜好市多 超商 美食） · Vault 收藏 2026-07-02<br>
+        <b>▶ YouTube 示範：</b>「無水咖哩」電鍋做法【天天好味】 https://youtu.be/XH_Ss9fCYHA
+      </div>
+      <div class="page-num serif">03</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ PAGE 4 : 03 番茄起司燉雞 ============ -->
+<div class="page recipe">
+  <div class="hero-wrap">
+    <img src="img/03-chicken.png" alt="番茄起司燉雞">
+    <div class="num-overlay serif">03</div>
+  </div>
+  <div class="head-block">
+    <h2 class="dish-name serif">番茄起司燉雞</h2>
+    <div class="dish-tagline">雞肉煎香後直接在同一鍋加洋蔥、番茄、酒燜煮，剪塊拌醬收乾，最後鋪起司融化收尾——10 分鐘、2 人份，一鍋到底。</div>
+  </div>
+  <div class="body-cols">
+    <div class="col-ingredients">
+      <h3 class="serif">食材</h3>
+      <ul>
+        <li>雞肉 1 片</li>
+        <li>小番茄 15 個</li>
+        <li>洋蔥 1/2 個</li>
+        <li>酒 50ml</li>
+        <li>起司 適量</li>
+        <li>調味醬（●）：番茄醬、伍斯特醬（ソース）、醬油、砂糖 各 1 大匙</li>
+        <li>大蒜粉 1/2 小匙</li>
+      </ul>
+      <div class="tag-row">
+        <span class="tag">⏱ 時間：10 分鐘・2 人份</span>
+        <span class="tag">🍳 鍋具：平底鍋（一鍋到底）</span>
+      </div>
+    </div>
+    <div class="col-steps">
+      <h3 class="serif">作法</h3>
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-text">雞肉煎出焦色，加入洋蔥、小番茄、酒。</div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-text">蓋鍋蓋，小火燜煮 5 分鐘。</div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-text">用剪刀將雞肉剪成塊，倒入調味醬（●）收汁。</div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-text">最後鋪上起司融化即完成。</div>
+      </div>
+    </div>
+  </div>
+  <div class="footer-bar">
+    <div class="source-row">
+      <div class="source-text">
+        <b>IG</b> @mtmtharb（まみ(mami) ラクうまレシピ） · Vault 收藏 2026-07-01<br>
+        <b>▶ YouTube 示範：</b>番茄起司燉雞｜一鍋到底【料理123】 https://youtu.be/snmpWpZWX3o
+      </div>
+      <div class="page-num serif">04</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ PAGE 5 : 04 入味五花肉捲角煮 ============ -->
+<div class="page recipe">
+  <div class="hero-wrap">
+    <img src="img/04-kakuni.png" alt="入味五花肉捲角煮">
+    <div class="num-overlay serif">04</div>
+  </div>
+  <div class="head-block">
+    <h2 class="dish-name serif">入味五花肉捲角煮</h2>
+    <div class="dish-tagline">豬五花肉片捲起來取代整塊三層肉，煮 5 分鐘就有軟嫩角煮口感，同鍋加厚揚げ和水煮蛋，一次做出份量十足的主菜。</div>
+  </div>
+  <div class="body-cols">
+    <div class="col-ingredients">
+      <h3 class="serif">食材（2-3 人份）</h3>
+      <ul>
+        <li>豬五花肉片 280g</li>
+        <li>厚揚げ（日式炸豆腐）1 包（150-200g）</li>
+        <li>太白粉 1 大匙</li>
+        <li>水煮蛋 6 顆（依喜好增減）</li>
+        <li>調味料 A：砂糖 4 大匙、醬油 7 大匙、味醂 7 大匙、酒 4 大匙、薑泥（管裝）5cm</li>
+      </ul>
+      <div class="tag-row">
+        <span class="tag">⏱ 時間：燉煮 5 分鐘</span>
+        <span class="tag">🍳 鍋具：平底鍋</span>
+      </div>
+    </div>
+    <div class="col-steps">
+      <h3 class="serif">作法</h3>
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-text">豬五花肉片一片對折，再用另一片反向捲起。</div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-text">全體裹上太白粉；厚揚げ切成適口大小。</div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-text">平底鍋熱油（約 1 大匙，材料外），豬肉捲收口朝下中火煎，空位處把厚揚げ也煎上色。</div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-text">全體上色後，稍微擦去多餘油脂，加入拌勻的調味料 A 煮至收汁沾裹。</div>
+      </div>
+      <div class="step">
+        <div class="step-num">5</div>
+        <div class="step-text">加入水煮蛋，再煮 2-3 分鐘即完成。</div>
+      </div>
+      <div class="step-note">要點：厚揚げ先煎過再煮更香，醬汁也更容易沾附；水煮蛋用滾水煮 6 分鐘可得半熟溏心口感。</div>
+    </div>
+  </div>
+  <div class="footer-bar">
+    <div class="source-row">
+      <div class="source-text">
+        <b>IG</b> @nanae_no_gohan（ななえ｜家族を満たす、10分ごはん） · Vault 收藏 2026-07-02<br>
+        <b>▶ YouTube 示範：</b>MASA 卷豬肉日式角煮定食 https://youtu.be/-6gHrZMfXCA
+      </div>
+      <div class="page-num serif">05</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ PAGE 6 : 05 北非蛋（蕃茄牛肉燉蛋） ============ -->
+<div class="page recipe">
+  <div class="hero-wrap">
+    <img src="img/05-shakshuka.png" alt="北非蛋">
+    <div class="num-overlay serif">05</div>
+  </div>
+  <div class="head-block">
+    <h2 class="dish-name serif">北非蛋（蕃茄牛肉燉蛋）</h2>
+    <div class="dish-tagline">蕃茄牛肉燉蛋，其實就是簡單版北非蛋——蕃茄與洋蔥、蒜末燜軟再加入牛絞肉翻炒，一鍋上桌，飲食控制友善。</div>
+  </div>
+  <div class="body-cols">
+    <div class="col-ingredients">
+      <h3 class="serif">食材</h3>
+      <ul>
+        <li>蕃茄</li>
+        <li>洋蔥</li>
+        <li>蒜末</li>
+        <li>牛絞肉</li>
+        <li>雞蛋</li>
+        <li>肯私廚北非恰摩拉（Chermoula）調味料</li>
+        <li>大蒜洋蔥粉</li>
+        <li>黑胡椒鹽</li>
+      </ul>
+      <div class="tag-row">
+        <span class="tag">⏱ 時間：懶人級</span>
+        <span class="tag">🍳 鍋具：黑色鑄鐵鍋</span>
+      </div>
+    </div>
+    <div class="col-steps">
+      <h3 class="serif">作法</h3>
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-text">蕃茄、洋蔥、蒜末下鍋燜軟。</div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-text">加入牛絞肉翻炒。</div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-text">以肯私廚北非恰摩拉、大蒜洋蔥粉、黑胡椒鹽調味。</div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-text">打入雞蛋，燉至喜歡的熟度（畫面示範為半熟荷包蛋）即完成。</div>
+      </div>
+    </div>
+  </div>
+  <div class="footer-bar">
+    <div class="source-row">
+      <div class="source-text">
+        <b>IG</b> @midori_enjoycooking（綠綠愛煮） · Vault 收藏 2026-04-05<br>
+        <b>▶ YouTube 示範：</b>一鍋到底北非蛋 Shakshuka【桂冠窩廚房】 https://youtu.be/QCU1-UWZxX0
+      </div>
+      <div class="page-num serif">06</div>
+    </div>
+  </div>
+</div>
