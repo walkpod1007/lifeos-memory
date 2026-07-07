@@ -1,8 +1,23 @@
 # Life-OS Skills — Claude Code 技能包
 
-38 個從一套天天在跑的個人自動化系統長出來的 [Claude Code](https://claude.com/claude-code) agent skills。不是範例代碼，是實際用了幾個月、踩過坑修過版的工作流程。
+裝完這包，你的 [Claude Code](https://claude.com/claude-code) 從「會聊天的終端機」變成「會做事的助理」：
+
+- 🗣「幫我做一張講座海報」→ 幾分鐘後拿到成品 PDF
+- 🗣「這支 YouTube 翻成日韓英泰字幕、傳回頻道」→ 一句話跑完整條管線
+- 🗣「未讀信哪些要回？」→ 分好優先級擺在你面前
+- 🗣「客廳燈調閱讀模式、掃地機掃廚房」→ 全屋家電聽得懂人話
+
+38 個 skills，全部從一套天天在跑的個人自動化系統（Life-OS）長出來。
 
 > 38 production-grown Claude Code agent skills. Docs in Traditional Chinese; each skill is self-describing via its `SKILL.md`.
+
+## 為什麼跟網路上的 skill 合集不一樣
+
+**1. 真系統長出來的。** 每個 skill 都在一套真實系統裡用了幾個月、踩坑修過版，不是 AI 一鍵生成的樣板。你拿到的就是本人在用的完整版本（只去掉個人識別），含踩坑註記與修正史。
+
+**2. 上下文不靠 compact 活命。** Life-OS 的核心設計：session 撞牆前把結論寫成 `handoff.md` 檔案交接給下一個 session，長期記憶是可讀、可版控的 Markdown（`MEMORY.md` 索引 + 記憶卡），而不是壓縮到失真的對話摘要。這批 skill 就是在這種「記憶靠檔案、不靠壓縮」的架構裡被磨出來的；承載這套機制的 harness 層（supervisor / watchdog / handoff 三件套）見 Roadmap，計畫第二波發布。
+
+**3. 會自我繁殖。** 內附「造技能的技能」（`doc-to-skill`、`skill-author`、`skill-vetting`）——把你自己的 SOP 文件蒸餾成正式 skill、從零打造新 skill、審查網路上抓來的 skill。用著用著，你會長出自己的技能包。
 
 ## 裝完你可以直接這樣說
 
