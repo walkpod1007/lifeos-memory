@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# claw — Claude Code 主線啟動器：掛 token 狗＋斷頭自動重生
+#
+# 用法：
+#   claw                    # session 名預設 main，於當前目錄起 claude
+#   claw deep               # 具名實例（一實例＝一 workspace＋一條狗）
+#   claw main --model opus  # session 名之後的參數原樣傳給 claude（每次重生都帶著）
+#
+# 職責分工（與 watchdog.sh 對拍）：
+#   狗：token 撞門檻 → 寫 handoff → 留 respawn 標記 → 殺 claude
+#   claw：發現 claude 死於狗手（標記在場且新鮮）→ 起新 claude 並塞 resume prompt
+#   使用者自己退出（/exit、Ctrl-D）→ 沒有標記，claw 跟著收工，不重生
+#
+# 紅線：一個 workspace（目錄）同時只跑一個 claw——狗是 sticky pin 單 transcript，
+# 同目錄多實例會 pin 錯對象。要多線就開不同目錄、取不同 session 名。
+#
+# 設定（環境變數，皆有預設）：
+#   LIFEOS_MEMORY_ROOT      記憶根目錄，預設 ~/lifeos-memory
+#   LIFEOS_TOKEN_THRESHOLD  狗的觸發門檻（由 watchdog.sh 讀取），預設 150000
+#   CLAUDE_HOME             Claude Code 設定目錄，預設 ~/.claude
+#   LIFEOS_CLAUDE_BIN       claude 執行檔，預設 PATH 上的 claude
+#   CLAW_RESPAWN_DELAY      斷頭後幾秒重生，預設 3
+#   CLAW_FAST_DEATH_SECS    重生後活不過這秒數算「快死」，預設 60
+#   CLAW_MAX_FAST_DEATHS    連續快死達此數就停止重生（防風暴），預設 3
+
+set -u
+
+# session 名：第一個不以 - 開頭的參數；其餘原樣傳 claude
+SESSION="main"
+if [[ $# -gt 0 && "$1" != -* ]]; then
+    SESSION="$1"; shift
+fi
+case "$SESSION" in
+    *[!a-zA-Z0-9_-]*) echo "claw: session 名只能用英數、-、_（拿到：${SESSION}）"; exit 1;;
+esac
+CLAUDE_ARGS=("$@")
+
+MEMORY_ROOT="${LIFEOS_MEMORY_ROOT:-$HOME/lifeos-memory}"
+CLAUDE_BIN="${LIFEOS_CLAUDE_BIN:-claude}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WATCHDOG="$SCRIPT_DIR/watchdog.sh"
+
+RESPAWN_MARK="$MEMORY_ROOT/.watchdog-${SESSION}.respawn"
+PIDFILE="$MEMORY_ROOT/.claw-${SESSION}.claude.pid"
+CLAW_LOCK="$MEMORY_ROOT/.claw-${SESSION}.lock.d"
+MARK_FRESH_SECS=300                                  # 標記超過這歲數視為殘留，不採信
+RESPAWN_DELAY="${CLAW_RESPAWN_DELAY:-3}"
+FAST_DEATH_SECS="${CLAW_FAST_DEATH_SECS:-60}"
+MAX_FAST_DEATHS="${CLAW_MAX_FAST_DEATHS:-3}"
+
+command -v "$CLAUDE_BIN" >/dev/null 2>&1 || { echo "claw: 找不到 claude（${CLAUDE_BIN}）——先裝 Claude Code CLI"; exit 127; }
+[[ -f "$WATCHDOG" ]] || { echo "claw: 找不到 watchdog.sh（${WATCHDOG}）"; exit 1; }
+mkdir -p "$MEMORY_ROOT"
+
+# 單實例鎖：同 session 名只允許一個 claw；殘留鎖看 pid 死活自清
+if ! mkdir "$CLAW_LOCK" 2>/dev/null; then
+    _old=$(cat "$CLAW_LOCK/pid" 2>/dev/null || echo "")
+    if [[ -n "$_old" ]] && kill -0 "$_old" 2>/dev/null; then
+        echo "claw: session「${SESSION}」已有 claw 在跑（pid=${_old}）。要多線請換名字：claw <別名>"
+        exit 1
+    fi
+    rm -rf "$CLAW_LOCK"
+    mkdir "$CLAW_LOCK" 2>/dev/null || { echo "claw: 搶鎖失敗（${CLAW_LOCK}）"; exit 1; }
+fi
+echo $$ > "$CLAW_LOCK/pid"
+
+# handoff 路徑：與 gen-handoff.sh 的專案標籤規則一致（cwd key 的最後一段）
+PROJ=$(printf '%s' "$PWD" | sed 's#[/.]#-#g' | sed 's/.*-//')
+HANDOFF="$MEMORY_ROOT/handoff/${PROJ}.md"
+
+start_dog() {
+    bash "$WATCHDOG" "$SESSION" "$PWD" $$ &
+    DOG_PID=$!
+}
+start_dog
+
+cleanup() {
+    kill "$DOG_PID" 2>/dev/null
+    rm -f "$PIDFILE"
+    rm -rf "$CLAW_LOCK"
+}
+trap cleanup EXIT
+# Ctrl-C：claw 自己不死（死了狗就退場）。用 noop handler 而非 ''——
+# '' 是 SIG_IGN 會被 claude 繼承，noop handler 不會，claude 拿到預設 disposition
+trap ':' INT QUIT
+# 被 TERM/HUP 殺時走 exit → EXIT trap 清狗清鎖（claude 留給使用者，不陪葬）
+trap 'exit 143' TERM HUP
+
+rm -f "$RESPAWN_MARK"   # 上一世殘留標記不採信
+
+echo "claw[$SESSION]: 狗已掛上（pid=${DOG_PID}，門檻 ${LIFEOS_TOKEN_THRESHOLD:-150000} tokens）🐕"
+
+GEN=0
+FAST_DEATHS=0
+while true; do
+    ARGS=(${CLAUDE_ARGS[@]+"${CLAUDE_ARGS[@]}"})    # bash 3.2 空陣列 + set -u 防炸寫法
+    if (( GEN > 0 )); then
+        ARGS+=("[自動 resume] 現在時刻：$(date '+%Y-%m-%d %H:%M')。你是被 token watchdog 斷頭後重生的新 session（第 ${GEN} 世）。先讀 ${HANDOFF}：SUMMARY/CURRENT 是上一世的狀態，NEXT 是接下來該做的事；有 ${MEMORY_ROOT}/MEMORY.md 就一併讀（記憶卡索引）。在途已授權的工作直接續做；全新開工、寫檔、commit、不可逆動作先向使用者確認。")
+    fi
+
+    # 狗若意外死亡（bug、被誤殺），重生 claude 前先把狗補回來
+    kill -0 "$DOG_PID" 2>/dev/null || { echo "claw[$SESSION]: 狗不見了，重掛一條"; start_dog; }
+
+    START_TS=$(date +%s)
+    "$CLAUDE_BIN" ${ARGS[@]+"${ARGS[@]}"} &
+    CLAUDE_PID=$!
+    echo "$CLAUDE_PID" > "$PIDFILE"
+
+    # wait 會被 trap 到的信號打斷（rc=128+sig），claude 還活著就繼續等
+    RC=0
+    while true; do
+        wait "$CLAUDE_PID"
+        RC=$?
+        kill -0 "$CLAUDE_PID" 2>/dev/null || break
+    done
+    rm -f "$PIDFILE"
+    LIFE=$(( $(date +%s) - START_TS ))
+
+    # 死因判定：狗殺的會留 respawn 標記（寫 handoff 之後、動刀之前）
+    MARK_OK=""
+    if [[ -f "$RESPAWN_MARK" ]]; then
+        _mark_mtime=$(stat -f %m "$RESPAWN_MARK" 2>/dev/null || stat -c %Y "$RESPAWN_MARK" 2>/dev/null || echo 0)
+        (( $(date +%s) - _mark_mtime <= MARK_FRESH_SECS )) && MARK_OK=1
+        rm -f "$RESPAWN_MARK"
+    fi
+
+    if [[ -z "$MARK_OK" ]]; then
+        echo "claw[$SESSION]: claude 退出（rc=${RC}，非狗所殺），claw 收工 👋"
+        exit "$RC"
+    fi
+
+    if (( LIFE < FAST_DEATH_SECS )); then
+        FAST_DEATHS=$((FAST_DEATHS+1))
+        if (( FAST_DEATHS >= MAX_FAST_DEATHS )); then
+            echo "claw[$SESSION]: 連續 ${FAST_DEATHS} 次重生後 ${FAST_DEATH_SECS}s 內死亡，停止重生（防風暴）。查 $MEMORY_ROOT/.logs/ 後再手動跑 claw"
+            exit 1
+        fi
+    else
+        FAST_DEATHS=0
+    fi
+
+    GEN=$((GEN+1))
+    echo "claw[$SESSION]: 被狗斷頭（token 撞門檻），handoff 已落地，${RESPAWN_DELAY}s 後重生第 ${GEN} 世 ♻️"
+    sleep "$RESPAWN_DELAY"
+done
