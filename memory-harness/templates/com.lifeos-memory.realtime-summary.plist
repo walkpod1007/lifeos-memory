@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.lifeos-memory.realtime-summary</string>
+
+    <!-- 把 __SCRIPT_PATH__ 換成 realtime-summary.sh 的實際絕對路徑 -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__SCRIPT_PATH__</string>
+    </array>
+
+    <!-- 每 600 秒（10 分鐘）跑一次 -->
+    <key>StartInterval</key>
+    <integer>600</integer>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- launchd 的 PATH 很窮，補上 homebrew 與常見位置（claude/qmd/timeout 都靠它）-->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <!-- 想改預設值再解開：
+        <key>LIFEOS_MEMORY_ROOT</key><string>/Users/you/lifeos-memory</string>
+        <key>LIFEOS_WATCH</key><string>auto</string>
+        -->
+    </dict>
+
+    <!-- install.sh 會把下面兩個路徑改指到 <記憶目錄>/.logs/——固定 /tmp 檔名可被同機他人預放 symlink。
+         手動使用本模板的人請自行改成自己可控的目錄 -->
+    <key>StandardOutPath</key>
+    <string>/dev/null</string>
+    <key>StandardErrorPath</key>
+    <string>/dev/null</string>
+</dict>
+</plist>
