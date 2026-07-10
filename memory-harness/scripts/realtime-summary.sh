@@ -71,6 +71,14 @@ HHMM=$(date +"%H%M")
 HHMM_DISPLAY=$(date +"%H:%M")
 DATE_DIR="$DAILY_DIR/$DATE"
 
+# ── 摘要用的 claude --print 自己也會留下 transcript ──
+# 它落在 $CLAUDE_HOME/projects/<cwd 轉成的目錄名>/。若不隔離，下一輪就會去摘要
+# 上一輪摘要留下的 transcript，變成自我餵食的無限迴圈（且每輪都新增檔案）。
+# 對策：呼叫 claude 前固定 cd 到 SUMMARIZER_CWD，讓 transcript 一律落在同一個
+# 可預測的目錄，並把該目錄從監看清單排除。
+SUMMARIZER_CWD="/"
+SELF_PROJ_DIR="$CLAUDE_HOME/projects/-"
+
 # ── 監看清單解析 ──
 # auto = ~/.claude/projects/ 下近 24h 有 jsonl 活動的所有專案
 # （看 jsonl mtime 而非目錄 mtime：append 不會更新目錄時間戳）
@@ -85,6 +93,11 @@ resolve_watch_dirs() {
             [[ -d "$CLAUDE_HOME/projects/$name" ]] && printf '%s\n' "$CLAUDE_HOME/projects/$name"
         done
     fi
+}
+
+# 永遠排除摘要器自己的 transcript 目錄（顯式 LIFEOS_WATCH 指到它也一樣排除）
+filter_self_project() {
+    grep -vFx "$SELF_PROJ_DIR" || true
 }
 
 # 專案目錄名 → 短標籤（取最後一段；-Users-you-myproj → myproj）
@@ -207,7 +220,9 @@ ${NEW_TEXT}"
     # 黑名單漏掉任何一種寫法，錯誤訊息就會被當成摘要寫檔。
     local RESPONSE="" i UPDATE_OK=0
     for i in 1 2 3; do
-        RESPONSE=$(echo "$PROMPT" | "$TIMEOUT_BIN" -k 15 60 claude --print --model "$MODEL" 2>/dev/null || true)
+        # cd 到 SUMMARIZER_CWD：這次呼叫留下的 transcript 才會落進被排除的 $SELF_PROJ_DIR，
+        # 而不是污染腳本當前所在的專案目錄（手動執行時 cwd 就是某個真專案）。
+        RESPONSE=$(cd "$SUMMARIZER_CWD" && echo "$PROMPT" | "$TIMEOUT_BIN" -k 15 60 claude --print --model "$MODEL" 2>/dev/null || true)
         if [[ -n "$RESPONSE" ]] && echo "$RESPONSE" | grep -qE '^[#*[:space:]]*SUMMARY[:：]'; then
             UPDATE_OK=1
             break
@@ -327,7 +342,7 @@ while IFS= read -r dir; do
     FOUND=1
     process_project "$dir"
     sleep 1
-done < <(resolve_watch_dirs)
+done < <(resolve_watch_dirs | filter_self_project)
 if [[ "$FOUND" == "0" ]]; then
     echo "[warn] 沒有可監看的專案（$CLAUDE_HOME/projects/ 近 24h 無活動，或 LIFEOS_WATCH 指的目錄不存在）" >&2
 fi
