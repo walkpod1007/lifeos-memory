@@ -201,14 +201,23 @@ STATE:
 對話記錄：
 ${NEW_TEXT}"
 
+    # 成功判準是「輸出符合契約」（白名單），不是「輸出不像錯誤訊息」（黑名單）。
+    # claude --print 認證失敗時 exit code 仍是 0、錯誤訊息走 stdout，而訊息文字隨環境而異
+    # （空環境是 "Not logged in"，launchd 與 Claude Code session 下都是 "API Error: 401"）。
+    # 黑名單漏掉任何一種寫法，錯誤訊息就會被當成摘要寫檔。
     local RESPONSE="" i UPDATE_OK=0
     for i in 1 2 3; do
         RESPONSE=$(echo "$PROMPT" | "$TIMEOUT_BIN" -k 15 60 claude --print --model "$MODEL" 2>/dev/null || true)
-        [[ -n "$RESPONSE" ]] && ! echo "$RESPONSE" | grep -qi "not logged in\|please run.*login\|authentication failed\|unauthorized" && UPDATE_OK=1 && break
+        if [[ -n "$RESPONSE" ]] && echo "$RESPONSE" | grep -qE '^[#*[:space:]]*SUMMARY[:：]'; then
+            UPDATE_OK=1
+            break
+        fi
         sleep $((i*2))
     done
-    if [[ "$UPDATE_OK" != "1" || -z "$RESPONSE" ]]; then
-        echo "[error][$PROJ] 摘要模型三次 retry 仍失敗（檢查 claude 登入狀態）" >&2
+    if [[ "$UPDATE_OK" != "1" ]]; then
+        # 不寫 checkpoint：這段 transcript 必須留給下一輪重試，否則永遠不會被摘要。
+        echo "[error][$PROJ] 摘要三次 retry 仍無合法 SUMMARY，checkpoint 不推進（檢查 claude 登入狀態）" >&2
+        echo "[error][$PROJ] 模型最後輸出：${RESPONSE:0:200}" >&2
         return
     fi
 
@@ -220,7 +229,13 @@ ${NEW_TEXT}"
     PART2=$(echo "$RESPONSE" | grep -m1 -E '^[#*[:space:]]*SLUG[:：]' | sed -E 's/^[#*[:space:]]*SLUG[:：][[:space:]]*//; s/[*[:space:]]+$//' || true)
     PART3=$(echo "$RESPONSE" | awk '/^[#*[:space:]]*STATE[:：]/{f=1; next} f{print}' || true)
 
-    local SUMMARY="${PART1:-$RESPONSE}"
+    # 不可 fallback 成 $RESPONSE：那會在解析失敗時把模型的原始輸出（可能是錯誤訊息）當成摘要。
+    # 上面的契約驗證已保證 SUMMARY: 存在，這裡只防 sed 把它清成空字串。
+    local SUMMARY="$PART1"
+    if [[ -z "$SUMMARY" ]]; then
+        echo "[error][$PROJ] SUMMARY 標籤存在但內容為空，不寫檔（checkpoint 不推進）" >&2
+        return
+    fi
     local SLUG
     SLUG=$(echo "$PART2" | python3 -c "
 import sys, re
