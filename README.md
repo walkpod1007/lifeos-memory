@@ -13,6 +13,7 @@ This repo doesn't tell you how to work. It does one thing: it makes your [Claude
 - 🧠 Conversations are **auto-summarized every 10 minutes** into daily logs, so the memory survives even when the session dies
 - 🐕 When token usage is about to hit the limit, a watchdog **writes a handoff file and respawns a fresh session** that picks up where the old one left off — no relying on context compaction to survive
 - 🔍 Everything you store is **searchable**: optional local vector search (BM25 + embedding + rerank), nothing gets uploaded to the cloud
+- ⚡️ Every prompt submission triggers **push-style memory recall** via local search; relevant memories are automatically injected into the context (with 120-minute dedup suppression)
 
 Your workflow stays yours; this repo only manages the memory.
 
@@ -23,11 +24,12 @@ All of it grew out of a personal automation system (Life-OS) that runs every sin
 **Memory layer (the main body of this repo, shipped):**
 
 ```
-install.sh                    One-command installer (dependency check → create dirs → schedule jobs → install claw → smoke test)
+install.sh                    One-command installer (dependency check → create dirs → schedule jobs → install claw → register recall hook → smoke test)
 memory-harness/scripts/       claw (session launcher), watchdog (token guard),
-                              gen-handoff (handoff writer), realtime-summary (10-minute summarizer)
+                              gen-handoff (handoff writer), realtime-summary (10-minute summarizer),
+                              memory-recall-hook (push memory recall hook)
 memory-cards/SKILL.md         How to write memory cards (atomic card + pitfall card formats and citation flow)
-tests/                        Sandboxed test suite (33 install checks + 25 claw checks; ships only when every one passes)
+tests/                        Sandboxed test suite (33 install + 25 claw + 39 recall-hook checks; ships only when every one passes)
 ```
 
 **Skill-making trio** (ready to use) — the entry point for "teaching Claude your own way of working":
@@ -82,6 +84,24 @@ To make every session start with its memory loaded, add one line to your project
 ```
 
 For how to write memory cards (facts you want kept, pits already stepped in), see `memory-cards/SKILL.md`.
+
+## Memory layer — memory recall
+
+On every prompt submission, the `UserPromptSubmit` hook automatically searches your local memory base using `qmd`, injecting relevant past memories only on hits, with repeated hits suppressed for 120 minutes.
+
+- **Requirements**: Requires [qmd](https://www.npmjs.com/package/@tobilu/qmd) (`npm i -g @tobilu/qmd`) for local search. If `qmd` is not installed, the hook silently degrades and does nothing.
+- **Fail-safe**: Silent exit 0 on any error; hook failures will never block your conversation or corrupt prompt input.
+
+### Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `MEMORY_RECALL_DISABLE` | `0` | Set to `1` to disable the recall hook entirely |
+| `MEMORY_RECALL_MIN` | `0.3` | Minimum score threshold for sync layer BM25 search |
+| `MEMORY_RECALL_VEC_MIN` | `0.48` | Minimum score threshold for background semantic/vector search |
+| `MEMORY_RECALL_MAX` | `3` | Maximum number of memory items injected per turn |
+| `MEMORY_RECALL_STATE` | `~/lifeos-memory/.recall-state` | State directory for dedup history and preheated vector cache |
+| `QMD_BIN` | `qmd` (from PATH) | Path to `qmd` binary executable |
 
 ## Memory layer — uninstall
 
@@ -157,6 +177,7 @@ Identifying information from the original system was replaced with placeholders 
 
 ## History
 
+- 2026-08-25: **Push-style memory recall shipped** — UserPromptSubmit hook automatically searches local memory base via qmd and injects relevant context; dual-layer BM25 + vector search with 120-minute dedup suppression and fail-safe silent degradation.
 - 2026-07-08: **Memory layer shipped** — one-command install.sh, 10-minute summaries, handoff files, memory card formats, single-session token watchdog (claw). Shipped after all 58 sandbox tests passed plus dogfooding in a clean environment.
 - 2026-07-07: First release of 35 skills → repositioned the same day as a **pure memory pack** and renamed to `lifeos-memory` (formerly `lifeos-skills`; old URLs redirect). Non-memory skills were removed; the git history has it all.
 
@@ -177,6 +198,7 @@ Identifying information from the original system was replaced with placeholders 
 - 🧠 對話**每 10 分鐘自動摘要**成 daily 日誌，就算 session 掛掉，記憶還留著
 - 🐕 token 快撞到限額之前，看門狗**自動寫好交接檔、重新開一個 session** 接著做，不用靠 compact 壓縮硬撐
 - 🔍 寫進去的東西**搜得回來**：可以選裝本機向量檢索（BM25＋embedding＋rerank），資料不需要上傳雲端
+- ⚡️ 每次送出 prompt，**推式記憶召回**自動檢索本機記憶庫、把相關舊記憶注入對話（120 分鐘內不重複注入）
 
 你的工作方式還是你的，這個 repo 只負責記憶。
 
@@ -187,11 +209,12 @@ Identifying information from the original system was replaced with placeholders 
 **記憶層（本 repo 主體，已上架）**：
 
 ```
-install.sh                    一鍵安裝（依賴檢查→建目錄→掛排程→裝 claw→冒煙測試）
+install.sh                    一鍵安裝（依賴檢查→建目錄→掛排程→裝 claw→註冊召回 hook→冒煙測試）
 memory-harness/scripts/       claw（session 啟動器）、watchdog（token 看門狗）、
-                              gen-handoff（交接檔）、realtime-summary（10 分鐘摘要）
+                              gen-handoff（交接檔）、realtime-summary（10 分鐘摘要）、
+                              memory-recall-hook（推式記憶召回 hook）
 memory-cards/SKILL.md         記憶卡寫法（atom 卡＋踩坑卡格式與引用流程）
-tests/                        沙盒測試套件（install 33 項、claw 25 項，全部通過才出包）
+tests/                        沙盒測試套件（install 33 項、claw 25 項、召回 hook 39 項，全部通過才出包）
 ```
 
 **造技能三件套**（即裝即用）——「把你自己的工作方式教給 Claude」的入口：
@@ -245,6 +268,24 @@ claw            # 用 claw 代替 claude 開工作 session
 ```
 
 記憶卡怎麼寫（讓 Claude 記住事實、記住踩過的坑）見 `memory-cards/SKILL.md`。
+
+## 記憶層 — 推式記憶召回
+
+每次送出 prompt 時，UserPromptSubmit hook 會自動透過 `qmd` 檢索本機記憶庫，命中相關舊記憶才注入對話，且 120 分鐘內不重複注入同一條內容。
+
+- **需要什麼**：需安裝 [qmd](https://www.npmjs.com/package/@tobilu/qmd)（`npm i -g @tobilu/qmd`）；若未安裝 qmd，hook 會靜默降級 exit 0，不影響任何對話。
+- **Fail-safe 鐵則**：任何錯誤一律靜默 exit 0，絕不阻擋或中斷對話。
+
+### 環境變數
+
+| 環境變數 | 預設值 | 說明 |
+|---|---|---|
+| `MEMORY_RECALL_DISABLE` | `0` | 設為 `1` 停用推式記憶召回 hook |
+| `MEMORY_RECALL_MIN` | `0.3` | 同步層 BM25 檢索門檻 |
+| `MEMORY_RECALL_VEC_MIN` | `0.48` | 背景向量層語意檢索門檻 |
+| `MEMORY_RECALL_MAX` | `3` | 每輪最多注入記憶條數 |
+| `MEMORY_RECALL_STATE` | `~/lifeos-memory/.recall-state` | 去重歷史與快取狀態目錄 |
+| `QMD_BIN` | `qmd`（從 PATH 找） | `qmd` 執行檔路徑 |
 
 ## 記憶層 — 卸載
 
@@ -320,5 +361,6 @@ claude
 
 ## 沿革
 
+- 2026-08-25：**推式記憶召回上架**——UserPromptSubmit hook 自動透過 qmd 檢索本機記憶庫並注入相關脈絡；同步 BM25 ＋ 背景向量雙層檢索、120 分鐘去重壓制、fail-safe 靜默降級。
 - 2026-07-08：**記憶層主體上架**——install.sh 一鍵安裝、10 分鐘摘要、handoff 交接、記憶卡格式、單 session token 看門狗（claw）。沙盒測試 58 項全部通過＋乾淨環境 dogfooding 驗證後出包。
 - 2026-07-07：首發 35 個 skills → 同日重定位為**純記憶包**並改名 `lifeos-memory`（原 `lifeos-skills`，舊網址自動轉址）。非記憶類技能已下架，git 歷史可考。

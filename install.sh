@@ -6,18 +6,20 @@
 #   ./install.sh --yes        # 全用預設值，不問
 #   ./install.sh --uninstall  # 卸載排程與 claw 指令（記憶資料不動）
 #
-# 做五件事：
+# 做六件事：
 #   1. 依賴檢查：claude CLI / python3 / timeout（macOS 要 coreutils）/ 可選 qmd
 #   2. 建記憶目錄結構（~/lifeos-memory：cards/ daily/ state/ handoff/ + MEMORY.md）
 #   3. 掛排程：realtime-summary 每 10 分鐘跑一次（macOS 用 launchd、Linux 用 cron）
 #   4. 裝 claw 指令
-#   5. 寫 CLAUDE.md 開機區塊（BEGIN/END 標記、先備份、卸載整塊移除）＋ 冒煙測試
+#   5. 註冊推式記憶召回 hook 進 settings.json（UserPromptSubmit；先備份、冪等、卸載對稱移除）
+#   6. 寫 CLAUDE.md 開機區塊（BEGIN/END 標記、先備份、卸載整塊移除）＋ 冒煙測試
 #
 # 測試/進階用環境變數（一般使用者不用理）：
 #   LIFEOS_MEMORY_ROOT       記憶根目錄（跳過互動提問）
 #   LIFEOS_LAUNCHD_DIR       plist 安裝目錄，預設 ~/Library/LaunchAgents
 #   LIFEOS_BIN_DIR           claw 指令安裝目錄，預設 ~/.local/bin
 #   LIFEOS_CLAUDE_MD         開機區塊寫入的檔案，預設 ~/.claude/CLAUDE.md
+#   LIFEOS_CLAUDE_SETTINGS   召回 hook 註冊的 settings 檔，預設 ~/.claude/settings.json
 #   LIFEOS_SKIP_CLAUDEMD=1   不寫開機區塊（改手動接線，見 README）
 #   LIFEOS_SKIP_ACTIVATE=1   只落檔不啟動排程（sandbox 測試用）
 #   LIFEOS_SKIP_CLAUDE_CHECK=1  跳過 claude 登入冒煙測試
@@ -36,6 +38,8 @@ LAUNCHD_DIR="${LIFEOS_LAUNCHD_DIR:-$HOME/Library/LaunchAgents}"
 BIN_DIR="${LIFEOS_BIN_DIR:-$HOME/.local/bin}"
 PLIST_DST="$LAUNCHD_DIR/$LABEL.plist"
 CLAUDE_MD="${LIFEOS_CLAUDE_MD:-$HOME/.claude/CLAUDE.md}"
+CLAUDE_SETTINGS="${LIFEOS_CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
+RECALL_HOOK_SH="$SCRIPTS/memory-recall-hook.sh"
 BLOCK_BEGIN="<!-- BEGIN lifeos-memory -->"
 BLOCK_END="<!-- END lifeos-memory -->"
 
@@ -78,6 +82,45 @@ if [[ "$UNINSTALL" == "1" ]]; then
             rm -f "$BIN_DIR/claw" && ok "已移除 $BIN_DIR/claw"
         else
             warn "$BIN_DIR/claw 缺本包識別標記，可能是你自己的檔案，保留不動"
+        fi
+    fi
+    # 對稱移除 settings.json 裡的召回 hook：只刪 command 含 memory-recall-hook.sh 的項，
+    # matcher 物件刪空就整個拿掉，其他 hooks / 事件 / 頂層鍵一律不碰
+    if [[ -f "$CLAUDE_SETTINGS" ]] && grep -qF "memory-recall-hook.sh" "$CLAUDE_SETTINGS" 2>/dev/null; then
+        _bak="$CLAUDE_SETTINGS.bak-lifeos-uninstall.$(date +%Y%m%d%H%M%S)"
+        if ! cp "$CLAUDE_SETTINGS" "$_bak"; then
+            warn "備份失敗，保守起見不動 ${CLAUDE_SETTINGS}（自己刪 memory-recall-hook.sh 那條 hook）"
+        elif python3 - "$CLAUDE_SETTINGS" <<'PYEOF'
+import json, sys
+path = sys.argv[1]
+try:
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+except Exception:
+    sys.exit(1)          # 非法 JSON：不動原檔，交外層警告
+if not isinstance(data, dict):
+    sys.exit(1)
+ups = data.get("hooks", {}).get("UserPromptSubmit")
+if isinstance(ups, list):
+    kept_matchers = []
+    for m in ups:
+        if isinstance(m, dict) and isinstance(m.get("hooks"), list):
+            m["hooks"] = [h for h in m["hooks"]
+                          if not (isinstance(h, dict)
+                                  and "memory-recall-hook.sh" in str(h.get("command", "")))]
+            if m["hooks"]:
+                kept_matchers.append(m)
+        else:
+            kept_matchers.append(m)
+    data["hooks"]["UserPromptSubmit"] = kept_matchers
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(data, f, indent=2, ensure_ascii=False)
+    f.write("\n")
+PYEOF
+        then
+            ok "settings.json 裡的召回 hook 已移除（備份：${_bak}）"
+        else
+            warn "settings.json 解析失敗，保留原檔不動（備份：${_bak}）——自己刪 memory-recall-hook.sh 那條 hook"
         fi
     fi
     if [[ -f "$CLAUDE_MD" ]] && grep -qF "$BLOCK_BEGIN" "$CLAUDE_MD"; then
@@ -135,9 +178,9 @@ fi
 HAS_QMD=0
 if command -v qmd >/dev/null 2>&1; then
     HAS_QMD=1
-    ok "qmd（向量回搜已就緒）"
+    ok "qmd（向量回搜與推式記憶召回已就緒）"
 else
-    warn "沒裝 qmd——記憶照常寫入，只是回搜用 grep。要語意搜尋：npm i -g @tobilu/qmd"
+    warn "沒裝 qmd——記憶照常寫入，只是回搜用 grep、推式記憶召回不會生效。要啟用：npm i -g @tobilu/qmd"
 fi
 
 # ─────────────────── 2. 記憶目錄 ───────────────────
@@ -241,7 +284,69 @@ case ":$PATH:" in
     *) warn "$BIN_DIR 不在 PATH——在 shell rc 加：export PATH=\"$BIN_DIR:\$PATH\"";;
 esac
 
-# ─────────────────── 5. CLAUDE.md 開機區塊 ───────────────────
+# ─────────────────── 5. 推式記憶召回 hook ───────────────────
+# 每次送出 prompt 時自動檢索記憶庫、命中才注入（hook 本體 fail-safe：任何錯誤靜默退出不擋對話）。
+# 註冊進 settings.json 的 UserPromptSubmit（巢狀 schema：matcher 物件的 hooks list）；
+# 冪等：已註冊就只更新 command 路徑，不疊加；寫入前備份；settings.json 非法時跳過本節、其餘照裝。
+say "註冊推式記憶召回 hook → $CLAUDE_SETTINGS"
+if [[ -f "$CLAUDE_SETTINGS" ]]; then
+    _bak="$CLAUDE_SETTINGS.bak-lifeos-install.$(date +%Y%m%d%H%M%S)"
+    cp "$CLAUDE_SETTINGS" "$_bak" || die "備份失敗，不動 $CLAUDE_SETTINGS"
+    ok "原檔已備份：$_bak"
+else
+    mkdir -p "$(dirname "$CLAUDE_SETTINGS")" || die "建不了 $(dirname "$CLAUDE_SETTINGS")"
+fi
+if python3 - "$CLAUDE_SETTINGS" "$RECALL_HOOK_SH" <<'PYEOF'
+import json, os, sys
+path, hook_sh = sys.argv[1], sys.argv[2]
+data = {}
+if os.path.exists(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            content = f.read().strip()
+        data = json.loads(content) if content else {}
+    except Exception:
+        sys.exit(1)      # 非法 JSON：不動原檔，交外層警告後跳過本節
+if not isinstance(data, dict):
+    sys.exit(1)
+hook_cmd = 'bash "%s"' % hook_sh
+hooks = data.setdefault("hooks", {})
+if not isinstance(hooks, dict):
+    sys.exit(1)
+ups = hooks.setdefault("UserPromptSubmit", [])
+if not isinstance(ups, list):
+    sys.exit(1)
+# 冪等：任何 matcher 物件裡已有本包 hook → 只就地更新 command，不疊加
+registered = False
+for m in ups:
+    if isinstance(m, dict) and isinstance(m.get("hooks"), list):
+        for h in m["hooks"]:
+            if isinstance(h, dict) and "memory-recall-hook.sh" in str(h.get("command", "")):
+                h["command"] = hook_cmd
+                h["type"] = "command"
+                registered = True
+if not registered:
+    target = None
+    for m in ups:
+        if isinstance(m, dict) and m.get("matcher", None) == "" and isinstance(m.get("hooks"), list):
+            target = m
+            break
+    if target is None:
+        target = {"matcher": "", "hooks": []}
+        ups.append(target)
+    target["hooks"].append({"type": "command", "command": hook_cmd})
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(data, f, indent=2, ensure_ascii=False)
+    f.write("\n")
+PYEOF
+then
+    ok "UserPromptSubmit hook 已註冊（重跑冪等，不疊加）"
+    [[ "$HAS_QMD" == "1" ]] || warn "召回 hook 需要 qmd 才會生效（沒 qmd 時 hook 靜默跳過，不影響對話）"
+else
+    warn "$CLAUDE_SETTINGS 不是合法 JSON——跳過 hook 註冊（其餘安裝照常）。修好後重跑 ./install.sh 即可補上"
+fi
+
+# ─────────────────── 6. CLAUDE.md 開機區塊 ───────────────────
 # 制度是行為不是檔案：沒有這塊，Claude 不會主動讀記憶（索引載入靠這裡的 @include）
 INSTALL_BLOCK=1
 [[ -n "${LIFEOS_SKIP_CLAUDEMD:-}" ]] && INSTALL_BLOCK=0
@@ -279,13 +384,13 @@ else
     warn "跳過 CLAUDE.md 區塊——記得手動在 CLAUDE.md 加：@$MEMORY_ROOT/MEMORY.md，否則 Claude 不會主動用記憶"
 fi
 
-# ─────────────────── 6. 冒煙測試 ───────────────────
+# ─────────────────── 7. 冒煙測試 ───────────────────
 say "冒煙測試"
 
-for _s in "$SCRIPTS/realtime-summary.sh" "$SCRIPTS/gen-handoff.sh" "$SCRIPTS/watchdog.sh" "$SCRIPTS/claw"; do
+for _s in "$SCRIPTS/realtime-summary.sh" "$SCRIPTS/gen-handoff.sh" "$SCRIPTS/watchdog.sh" "$SCRIPTS/claw" "$RECALL_HOOK_SH"; do
     bash -n "$_s" || die "語法錯誤：$_s"
 done
-ok "四支腳本語法全過"
+ok "五支腳本語法全過"
 
 if [[ -z "${LIFEOS_SKIP_CLAUDE_CHECK:-}" ]]; then
     _out=$("$TIMEOUT_BIN" 60 claude -p "只回兩個字母：OK" --model haiku 2>/dev/null || echo "")
@@ -313,6 +418,7 @@ cat <<EOF
   1. 到任何專案目錄，用  claw  代替  claude  開工作 session
      （token 撞 150000 門檻會自動：寫 handoff → 斷頭 → 重生新 session 接續工作）
   2. 每 10 分鐘，對話自動摘要進  $MEMORY_ROOT/daily/
+     每次送出 prompt，召回 hook 自動檢索記憶庫、命中才注入（需 qmd；120 分鐘內不重複）
   3. 記憶開機接線：安裝時已寫進 CLAUDE.md 開機區塊（若剛才選了跳過，
      手動在 CLAUDE.md 加一行  @$MEMORY_ROOT/MEMORY.md）
   4. 記憶卡寫法（讓 Claude 記事實、記踩過的坑）見 memory-cards/SKILL.md
