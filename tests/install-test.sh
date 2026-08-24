@@ -35,9 +35,10 @@ chmod +x "$SB/bin/"*
 
 MEM="$SB/memroot"
 CMD="$SB/claude-md/CLAUDE.md"
+SETTINGS="$SB/claude-settings.json"
 COMMON=(env PATH="$SB/bin:$PATH" LIFEOS_MEMORY_ROOT="$MEM"
         LIFEOS_LAUNCHD_DIR="$SB/launchd" LIFEOS_BIN_DIR="$SB/insbin"
-        LIFEOS_CLAUDE_MD="$CMD"
+        LIFEOS_CLAUDE_MD="$CMD" LIFEOS_CLAUDE_SETTINGS="$SETTINGS"
         LIFEOS_SKIP_ACTIVATE=1 LIFEOS_SKIP_CLAUDE_CHECK=1)
 
 echo "— I1 macOS 分支安裝 —"
@@ -89,15 +90,15 @@ echo "— I5 紅隊回歸：空白路徑／誤刪防護 —"
 MEM2="$SB/mem root"
 rm -f "$SB/crontab.state"
 env PATH="$SB/bin:$PATH" LIFEOS_MEMORY_ROOT="$MEM2" LIFEOS_LAUNCHD_DIR="$SB/launchd" \
-    LIFEOS_BIN_DIR="$SB/insbin" LIFEOS_CLAUDE_MD="$CMD" LIFEOS_SKIP_ACTIVATE=1 \
-    LIFEOS_SKIP_CLAUDE_CHECK=1 LIFEOS_FORCE_OS=Linux \
+    LIFEOS_BIN_DIR="$SB/insbin" LIFEOS_CLAUDE_MD="$CMD" LIFEOS_CLAUDE_SETTINGS="$SETTINGS" \
+    LIFEOS_SKIP_ACTIVATE=1 LIFEOS_SKIP_CLAUDE_CHECK=1 LIFEOS_FORCE_OS=Linux \
     bash "$SB/pack/install.sh" --yes > "$SB/i5a.out" 2>&1
 check "空白路徑安裝退出碼 0" "[[ $? -eq 0 ]]"
 check "空白路徑 cron 行有單引號包住" "grep -qF \"LIFEOS_MEMORY_ROOT='$MEM2'\" '$SB/crontab.state'"
 # 5b. 單引號路徑要被拒絕（fail-closed，不寫壞 crontab）
 env PATH="$SB/bin:$PATH" LIFEOS_MEMORY_ROOT="$SB/o'brien" LIFEOS_LAUNCHD_DIR="$SB/launchd" \
-    LIFEOS_BIN_DIR="$SB/insbin" LIFEOS_CLAUDE_MD="$CMD" LIFEOS_SKIP_ACTIVATE=1 \
-    LIFEOS_SKIP_CLAUDE_CHECK=1 LIFEOS_FORCE_OS=Linux \
+    LIFEOS_BIN_DIR="$SB/insbin" LIFEOS_CLAUDE_MD="$CMD" LIFEOS_CLAUDE_SETTINGS="$SETTINGS" \
+    LIFEOS_SKIP_ACTIVATE=1 LIFEOS_SKIP_CLAUDE_CHECK=1 LIFEOS_FORCE_OS=Linux \
     bash "$SB/pack/install.sh" --yes > "$SB/i5b.out" 2>&1
 check "單引號路徑被拒絕（非 0 退出）" "[[ $? -ne 0 ]]"
 check "拒絕訊息有講原因" "grep -q '單引號' '$SB/i5b.out'"
@@ -105,8 +106,8 @@ check "拒絕訊息有講原因" "grep -q '單引號' '$SB/i5b.out'"
 echo "0 9 * * * /usr/local/bin/backup # lifeos-memory notes" >> "$SB/crontab.state"
 printf '#!/bin/sh\necho my own claw\n' > "$SB/insbin/claw"; chmod +x "$SB/insbin/claw"
 env PATH="$SB/bin:$PATH" LIFEOS_MEMORY_ROOT="$MEM2" LIFEOS_LAUNCHD_DIR="$SB/launchd" \
-    LIFEOS_BIN_DIR="$SB/insbin" LIFEOS_CLAUDE_MD="$CMD" LIFEOS_SKIP_ACTIVATE=1 \
-    LIFEOS_SKIP_CLAUDE_CHECK=1 LIFEOS_FORCE_OS=Linux \
+    LIFEOS_BIN_DIR="$SB/insbin" LIFEOS_CLAUDE_MD="$CMD" LIFEOS_CLAUDE_SETTINGS="$SETTINGS" \
+    LIFEOS_SKIP_ACTIVATE=1 LIFEOS_SKIP_CLAUDE_CHECK=1 LIFEOS_FORCE_OS=Linux \
     bash "$SB/pack/install.sh" --uninstall > "$SB/i5c.out" 2>&1
 check "本包 cron 行已移除" "! grep -q 'realtime-summary.sh' '$SB/crontab.state'"
 check "使用者含 tag 字串的行仍在" "grep -q 'lifeos-memory notes' '$SB/crontab.state'"
