@@ -26,8 +26,9 @@ All of it grew out of a personal automation system (Life-OS) that runs every sin
 ```
 install.sh                    One-command installer (dependency check → create dirs → schedule jobs → install claw → register recall hook → smoke test)
 memory-harness/scripts/       claw (session launcher), watchdog (token guard),
-                              gen-handoff (handoff writer), realtime-summary (10-minute summarizer),
-                              memory-recall-hook (push memory recall hook)
+                              gen-handoff (handoff writer),
+                              realtime-summary (10-minute summarizer; superseded by memory-os notes/),
+                              memory-recall-hook (push memory recall hook; superseded by memory-os recall/)
 memory-cards/SKILL.md         How to write memory cards (atomic card + pitfall card formats and citation flow)
 tests/                        Sandboxed test suite (33 install + 25 claw + 39 recall-hook checks; ships only when every one passes)
 ```
@@ -37,6 +38,22 @@ tests/                        Sandboxed test suite (33 install + 25 claw + 39 re
 - "Turn this SOP document of mine into a skill" → `doc-to-skill` distills it into a proper SKILL.md
 - "Build me a skill for X from scratch" → `skill-author`, a standard pipeline with red-team review built in
 - "Is this skill I grabbed off the internet safe?" → `skill-vetting` reviews it before formatting and installing
+
+## Companion repo: memory-os
+
+This repo and [memory-os](https://github.com/walkpod1007/memory-os) are two layers of the same system, not two competing ones. Install both; do not install the overlapping pieces twice.
+
+| Concern | lifeos-memory (this repo) | memory-os |
+|---|---|---|
+| Pitfall card written on the spot when a mistake happens | yes, format + citation flow | format only |
+| Session survival: token watchdog, handoff file, respawn | yes (claw + watchdog + gen-handoff) | no |
+| Cross-day memory | 10-minute summaries into daily logs (**superseded**, see below) | nightly write-time observation notes (LongMemEval 500: 95%) |
+| Per-prompt recall | `memory-recall-hook` (qmd query, **superseded**) | `recall-router` (card/skill match, no model, no network) |
+| Search | qmd install notes | qmd config + `qmd-search` MCP server with fused ranking |
+
+Two pieces here are kept for compatibility but **no longer recommended**: `realtime-summary` (the 10-minute summarizer) is replaced by memory-os `notes/`, and `memory-recall-hook` is replaced by memory-os `recall/`. If you install memory-os, skip those two; running both sets will double-inject context. Everything else (pitfall cards, watchdog, handoff, claw) has no counterpart in memory-os and stays here.
+
+The handoff writer shipped here (`gen-handoff`) is the August 2026 version. The live one has since grown an in-flight snapshot (dispatched background tasks, touched files, orphan outputs); a scrubbed update is tracked as an open item.
 
 ## Memory layer — requirements
 
@@ -86,6 +103,8 @@ To make every session start with its memory loaded, add one line to your project
 For how to write memory cards (facts you want kept, pits already stepped in), see `memory-cards/SKILL.md`.
 
 ## Memory layer — memory recall
+
+> **Superseded.** The hook below still works, but the recommended per-prompt recall is now [memory-os `recall/`](https://github.com/walkpod1007/memory-os) (`recall-router`). Do not register both hooks.
 
 On every prompt submission, the `UserPromptSubmit` hook automatically searches your local memory base using `qmd`, injecting relevant past memories only on hits, with repeated hits suppressed for 120 minutes.
 
@@ -177,6 +196,7 @@ Identifying information from the original system was replaced with placeholders 
 
 ## History
 
+- 2026-10-14: **Companion repo [memory-os](https://github.com/walkpod1007/memory-os) published** — nightly observation notes, `recall-router`, qmd search. The 10-minute summarizer and the recall hook here are marked superseded by it; pitfall cards, watchdog, handoff and claw stay here.
 - 2026-08-25: **Push-style memory recall shipped** — UserPromptSubmit hook automatically searches local memory base via qmd and injects relevant context; dual-layer BM25 + vector search with 120-minute dedup suppression and fail-safe silent degradation.
 - 2026-07-08: **Memory layer shipped** — one-command install.sh, 10-minute summaries, handoff files, memory card formats, single-session token watchdog (claw). Shipped after all 58 sandbox tests passed plus dogfooding in a clean environment.
 - 2026-07-07: First release of 35 skills → repositioned the same day as a **pure memory pack** and renamed to `lifeos-memory` (formerly `lifeos-skills`; old URLs redirect). Non-memory skills were removed; the git history has it all.
@@ -211,8 +231,9 @@ Identifying information from the original system was replaced with placeholders 
 ```
 install.sh                    一鍵安裝（依賴檢查→建目錄→掛排程→裝 claw→註冊召回 hook→冒煙測試）
 memory-harness/scripts/       claw（session 啟動器）、watchdog（token 看門狗）、
-                              gen-handoff（交接檔）、realtime-summary（10 分鐘摘要）、
-                              memory-recall-hook（推式記憶召回 hook）
+                              gen-handoff（交接檔）、
+                              realtime-summary（10 分鐘摘要；已由 memory-os notes/ 取代）、
+                              memory-recall-hook（推式記憶召回 hook；已由 memory-os recall/ 取代）
 memory-cards/SKILL.md         記憶卡寫法（atom 卡＋踩坑卡格式與引用流程）
 tests/                        沙盒測試套件（install 33 項、claw 25 項、召回 hook 39 項，全部通過才出包）
 ```
@@ -222,6 +243,22 @@ tests/                        沙盒測試套件（install 33 項、claw 25 項�
 - 「把我這份 SOP 文件變成一個 skill」→ `doc-to-skill` 蒸餾成正式 SKILL.md
 - 「幫我從零做一個 XX skill」→ `skill-author` 標準流程，內建紅隊審查
 - 「網路上抓的這個 skill 安全嗎？」→ `skill-vetting` 審查過了才格式化安裝
+
+## 配套 repo：memory-os
+
+這個 repo 和 [memory-os](https://github.com/walkpod1007/memory-os) 是同一套系統的兩層，不是兩個互相取代的東西。兩個一起裝；重疊的部分不要裝兩次。
+
+| 事情 | lifeos-memory（本 repo） | memory-os |
+|---|---|---|
+| 犯錯當場落一張踩坑卡 | 有，含格式與引用流程 | 只有格式 |
+| session 活下來：token 看門狗、交接檔、重生 | 有（claw＋watchdog＋gen-handoff） | 沒有 |
+| 跨日記憶 | 10 分鐘摘要進 daily 日誌（**已被取代**，見下） | 夜間寫入型觀察筆記（LongMemEval 500 題 95%） |
+| 每輪召回 | `memory-recall-hook`（qmd 查詢，**已被取代**） | `recall-router`（比對卡片與技能，不用模型、不連網） |
+| 檢索 | qmd 安裝說明 | qmd 設定＋`qmd-search` MCP server，多路融合排序 |
+
+這裡有兩件為了相容留著、但**不再推薦**：`realtime-summary`（10 分鐘摘要）由 memory-os 的 `notes/` 取代，`memory-recall-hook` 由 memory-os 的 `recall/` 取代。裝了 memory-os 就跳過這兩支；兩套都跑會把脈絡注入兩次。其他東西（踩坑卡、看門狗、交接、claw）memory-os 沒有對應物，留在這裡。
+
+這裡附的交接腳本 `gen-handoff` 是 2026 年 8 月版。現役那支後來長出了在途快照（派出的背景任務、動過的檔案、孤兒產物）；去識別後的更新列為待辦。
 
 ## 記憶層 — 需要什麼
 
@@ -270,6 +307,8 @@ claw            # 用 claw 代替 claude 開工作 session
 記憶卡怎麼寫（讓 Claude 記住事實、記住踩過的坑）見 `memory-cards/SKILL.md`。
 
 ## 記憶層 — 推式記憶召回
+
+> **已被取代。** 下面這支 hook 還能用，但現在推薦的每輪召回是 [memory-os `recall/`](https://github.com/walkpod1007/memory-os)（`recall-router`）。兩支 hook 不要同時註冊。
 
 每次送出 prompt 時，UserPromptSubmit hook 會自動透過 `qmd` 檢索本機記憶庫，命中相關舊記憶才注入對話，且 120 分鐘內不重複注入同一條內容。
 
@@ -361,6 +400,7 @@ claude
 
 ## 沿革
 
+- 2026-10-14：**配套 repo [memory-os](https://github.com/walkpod1007/memory-os) 公開**——夜間觀察筆記、`recall-router`、qmd 檢索。本 repo 的 10 分鐘摘要與召回 hook 標為已由它取代；踩坑卡、看門狗、交接、claw 留在這裡。
 - 2026-08-25：**推式記憶召回上架**——UserPromptSubmit hook 自動透過 qmd 檢索本機記憶庫並注入相關脈絡；同步 BM25 ＋ 背景向量雙層檢索、120 分鐘去重壓制、fail-safe 靜默降級。
 - 2026-07-08：**記憶層主體上架**——install.sh 一鍵安裝、10 分鐘摘要、handoff 交接、記憶卡格式、單 session token 看門狗（claw）。沙盒測試 58 項全部通過＋乾淨環境 dogfooding 驗證後出包。
 - 2026-07-07：首發 35 個 skills → 同日重定位為**純記憶包**並改名 `lifeos-memory`（原 `lifeos-skills`，舊網址自動轉址）。非記憶類技能已下架，git 歷史可考。
