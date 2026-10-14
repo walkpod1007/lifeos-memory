@@ -101,6 +101,17 @@ qmd search -c memory "關鍵詞或一句話"               # 語意回搜
 
 回搜時機：接到新任務先搜一次坑卡（「這件事以前踩過坑嗎？」）；話題觸及具體人事物時搜記憶卡。沒裝 qmd 就用 `grep -ri`，一樣能活，只是查得笨一點。
 
+## 5. feedback 檔升格成坑卡（可選）
+
+Claude Code 的 auto memory 會把你的糾正存成 `type: feedback` 的小檔，散在 auto memory 目錄、沒有索引、回搜不到。用 `memory-harness/scripts/feedback-to-pitfall.sh` 把它們收進本機制：
+
+```bash
+bash memory-harness/scripts/feedback-to-pitfall.sh --dry-run   # 先預覽：會建哪些卡、刪哪些檔
+bash memory-harness/scripts/feedback-to-pitfall.sh             # 正式轉換
+```
+
+每個 feedback 檔會變成 `cards/pitfall/<name>.md`（坑卡格式如上；**根因**與**下次怎麼避**留待你補一兩句）、在 `MEMORY.md` 加一行索引、移除 auto memory 索引裡的對應行、刪掉原檔；同名坑卡已存在就跳過、不覆寫。feedback 目錄預設是 `$CLAUDE_HOME/projects/<目前目錄的 cwd key>/memory`，用 `LIFEOS_FEEDBACK_DIR` 改道；想同時把一行摘要追加到你的常駐規則檔，設 `LIFEOS_SOUL_FILE`。自動升格的卡**要人補完根因**才算寫完——摘要只是起點。
+
 ## 反模式
 
 - ❌ 一張卡塞多個事實（回搜命中率崩壞）

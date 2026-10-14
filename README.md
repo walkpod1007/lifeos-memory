@@ -26,11 +26,13 @@ All of it grew out of a personal automation system (Life-OS) that runs every sin
 ```
 install.sh                    One-command installer (dependency check → create dirs → schedule jobs → install claw → register recall hook → smoke test)
 memory-harness/scripts/       claw (session launcher), watchdog (token guard),
-                              gen-handoff (handoff writer),
+                              gen-handoff (handoff writer, with in-flight snapshot),
+                              feedback-to-pitfall (promote auto-memory feedback files to pitfall cards),
+                              lib/ (helpers gen-handoff calls: in-flight snapshot, dangling-commitment scan, entity-backfill scan, ...),
                               realtime-summary (10-minute summarizer; superseded by memory-os notes/),
                               memory-recall-hook (push memory recall hook; superseded by memory-os recall/)
 memory-cards/SKILL.md         How to write memory cards (atomic card + pitfall card formats and citation flow)
-tests/                        Sandboxed test suite (33 install + 25 claw + 39 recall-hook checks; ships only when every one passes)
+tests/                        Sandboxed test suite (33 install + 25 claw + 39 recall-hook + 36 gen-handoff checks; ships only when every one passes)
 ```
 
 **Skill-making trio** (ready to use) — the entry point for "teaching Claude your own way of working":
@@ -53,7 +55,7 @@ This repo and [memory-os](https://github.com/walkpod1007/memory-os) are two laye
 
 Two pieces here are kept for compatibility but **no longer recommended**: `realtime-summary` (the 10-minute summarizer) is replaced by memory-os `notes/`, and `memory-recall-hook` is replaced by memory-os `recall/`. If you install memory-os, skip those two; running both sets will double-inject context. Everything else (pitfall cards, watchdog, handoff, claw) has no counterpart in memory-os and stays here.
 
-The handoff writer shipped here (`gen-handoff`) is the August 2026 version. The live one has since grown an in-flight snapshot (dispatched background tasks, touched files, orphan outputs); a scrubbed update is tracked as an open item.
+The handoff writer shipped here (`gen-handoff`) was updated on 2026-10-14 to the live version's feature set, scrubbed: it now appends an in-flight snapshot (dispatched background tasks, latest user requests, orphan outputs, touched files) plus closeout ledger, dangling-commitment scan, entity-backfill to-do and last-dream sections. Sections that depend on local-only data sources are skipped with a one-line note in the log when the source is absent.
 
 ## Memory layer — requirements
 
@@ -121,6 +123,22 @@ On every prompt submission, the `UserPromptSubmit` hook automatically searches y
 | `MEMORY_RECALL_MAX` | `3` | Maximum number of memory items injected per turn |
 | `MEMORY_RECALL_STATE` | `~/lifeos-memory/.recall-state` | State directory for dedup history and preheated vector cache |
 | `QMD_BIN` | `qmd` (from PATH) | Path to `qmd` binary executable |
+
+### gen-handoff: optional data sources
+
+`gen-handoff` always writes the four-section handoff. The automatic sections below are appended mechanically (no model call) and each one is skipped, with a one-line note in `$LIFEOS_MEMORY_ROOT/.logs/gen-handoff.log`, when its data source is missing:
+
+| Variable | Needed for | If unset |
+|---|---|---|
+| `LIFEOS_OWNER_LINE_ID` | marking the owner's LINE messages as "本人✓" in the handoff excerpt | nobody is marked as owner (fail-closed) |
+| `LIFEOS_LINE_PENDING_TOOL` | the LINE receive tool whose results are trusted as `<line_message>` sources (default `mcp__line__get_pending`) | LINE excerpt only trusts the default name |
+| `LIFEOS_TICKETS_DIR` | closeout section cross-check (`*.md` with `status: closed`) | `$LIFEOS_MEMORY_ROOT/worktickets`; absent = ledger lines only |
+| `LIFEOS_WIKI_DIR` | entity-backfill to-do section | section skipped |
+| `DREAM_DIR` | last-dream section (`*-dream.md` files) | section skipped |
+| `LIFEOS_EVENT_STREAM_DIR` | in-flight (d) prefers a tool-call event stream | falls back to scanning the transcript |
+| `LIFEOS_SESSION_REGISTRY` | slug → handoff path lookup (`sessions.json`) | default path `$LIFEOS_MEMORY_ROOT/handoff/<proj>.md` |
+
+`feedback-to-pitfall.sh` (optional) promotes Claude Code auto-memory `type: feedback` files into pitfall cards under `cards/pitfall/`, adds the index line to `MEMORY.md`, then deletes the original; `--dry-run` shows what it would do.
 
 ## Memory layer — uninstall
 
@@ -196,6 +214,7 @@ Identifying information from the original system was replaced with placeholders 
 
 ## History
 
+- 2026-10-14: **`gen-handoff` updated to the live feature set (scrubbed)** — in-flight snapshot (dispatched background tasks, latest user requests, orphan outputs, touched files), closeout ledger, dangling-commitment scan, entity-backfill to-do, last-dream; helpers moved into `memory-harness/scripts/lib/`; `feedback-to-pitfall.sh` added; 36 new sandbox checks.
 - 2026-10-14: **Companion repo [memory-os](https://github.com/walkpod1007/memory-os) published** — nightly observation notes, `recall-router`, qmd search. The 10-minute summarizer and the recall hook here are marked superseded by it; pitfall cards, watchdog, handoff and claw stay here.
 - 2026-08-25: **Push-style memory recall shipped** — UserPromptSubmit hook automatically searches local memory base via qmd and injects relevant context; dual-layer BM25 + vector search with 120-minute dedup suppression and fail-safe silent degradation.
 - 2026-07-08: **Memory layer shipped** — one-command install.sh, 10-minute summaries, handoff files, memory card formats, single-session token watchdog (claw). Shipped after all 58 sandbox tests passed plus dogfooding in a clean environment.
@@ -231,11 +250,13 @@ Identifying information from the original system was replaced with placeholders 
 ```
 install.sh                    一鍵安裝（依賴檢查→建目錄→掛排程→裝 claw→註冊召回 hook→冒煙測試）
 memory-harness/scripts/       claw（session 啟動器）、watchdog（token 看門狗）、
-                              gen-handoff（交接檔）、
+                              gen-handoff（交接檔，含在途快照）、
+                              feedback-to-pitfall（把 auto memory 的 feedback 檔升格成踩坑卡）、
+                              lib/（gen-handoff 呼叫的輔助腳本：在途快照、懸空委託掃描、條目回填掃描等）、
                               realtime-summary（10 分鐘摘要；已由 memory-os notes/ 取代）、
                               memory-recall-hook（推式記憶召回 hook；已由 memory-os recall/ 取代）
 memory-cards/SKILL.md         記憶卡寫法（atom 卡＋踩坑卡格式與引用流程）
-tests/                        沙盒測試套件（install 33 項、claw 25 項、召回 hook 39 項，全部通過才出包）
+tests/                        沙盒測試套件（install 33 項、claw 25 項、召回 hook 39 項、gen-handoff 36 項，全部通過才出包）
 ```
 
 **造技能三件套**（即裝即用）——「把你自己的工作方式教給 Claude」的入口：
@@ -258,7 +279,7 @@ tests/                        沙盒測試套件（install 33 項、claw 25 項�
 
 這裡有兩件為了相容留著、但**不再推薦**：`realtime-summary`（10 分鐘摘要）由 memory-os 的 `notes/` 取代，`memory-recall-hook` 由 memory-os 的 `recall/` 取代。裝了 memory-os 就跳過這兩支；兩套都跑會把脈絡注入兩次。其他東西（踩坑卡、看門狗、交接、claw）memory-os 沒有對應物，留在這裡。
 
-這裡附的交接腳本 `gen-handoff` 是 2026 年 8 月版。現役那支後來長出了在途快照（派出的背景任務、動過的檔案、孤兒產物）；去識別後的更新列為待辦。
+這裡附的交接腳本 `gen-handoff` 已在 2026-10-14 更新到現役版的功能面（去識別後）：交接卡會機械附上在途快照（已派出的背景任務、使用者最近委託、孤兒產物、動過的檔案），以及本輪收尾帳、懸空委託偵測、條目回填待辦、最近一夢。依賴本機專屬資料源的段落，資料源不存在時會跳過並在 log 留一行說明。
 
 ## 記憶層 — 需要什麼
 
@@ -325,6 +346,22 @@ claw            # 用 claw 代替 claude 開工作 session
 | `MEMORY_RECALL_MAX` | `3` | 每輪最多注入記憶條數 |
 | `MEMORY_RECALL_STATE` | `~/lifeos-memory/.recall-state` | 去重歷史與快取狀態目錄 |
 | `QMD_BIN` | `qmd`（從 PATH 找） | `qmd` 執行檔路徑 |
+
+### gen-handoff：選配資料源
+
+`gen-handoff` 一定會寫四段交接卡；下面這些自動段是機械附上的（不呼叫模型），資料源不存在就跳過，並在 `$LIFEOS_MEMORY_ROOT/.logs/gen-handoff.log` 留一行說明：
+
+| 變數 | 用途 | 沒設的話 |
+|---|---|---|
+| `LIFEOS_OWNER_LINE_ID` | 讓交接卡摘錄把你本人的 LINE 訊息標成「本人✓」 | 沒有人會被標成本人（fail-closed） |
+| `LIFEOS_LINE_PENDING_TOOL` | 被信任為 `<line_message>` 來源的 LINE 收訊工具全名（預設 `mcp__line__get_pending`） | 只認預設名稱 |
+| `LIFEOS_TICKETS_DIR` | 收尾帳交叉核對（`status: closed` 的 `*.md`） | 預設 `$LIFEOS_MEMORY_ROOT/worktickets`；不存在就只列帳本行 |
+| `LIFEOS_WIKI_DIR` | 條目回填待辦段 | 整段跳過 |
+| `DREAM_DIR` | 最近一夢段（`*-dream.md`） | 整段跳過 |
+| `LIFEOS_EVENT_STREAM_DIR` | 在途快照 (d) 優先吃工具呼叫事件流 | 退回掃 transcript |
+| `LIFEOS_SESSION_REGISTRY` | slug → handoff 路徑對照（`sessions.json`） | 預設路徑 `$LIFEOS_MEMORY_ROOT/handoff/<proj>.md` |
+
+`feedback-to-pitfall.sh`（選配）把 Claude Code auto memory 裡 `type: feedback` 的檔升格成 `cards/pitfall/` 下的踩坑卡、在 `MEMORY.md` 加一行索引、再刪掉原檔；`--dry-run` 只預覽。
 
 ## 記憶層 — 卸載
 
@@ -400,6 +437,7 @@ claude
 
 ## 沿革
 
+- 2026-10-14：**`gen-handoff` 更新到現役版功能面（去識別）**——在途快照（已派出的背景任務、使用者最近委託、孤兒產物、動過的檔案）、本輪收尾帳、懸空委託偵測、條目回填待辦、最近一夢；輔助腳本搬進 `memory-harness/scripts/lib/`；新增 `feedback-to-pitfall.sh`；新增 36 項沙盒測試。
 - 2026-10-14：**配套 repo [memory-os](https://github.com/walkpod1007/memory-os) 公開**——夜間觀察筆記、`recall-router`、qmd 檢索。本 repo 的 10 分鐘摘要與召回 hook 標為已由它取代；踩坑卡、看門狗、交接、claw 留在這裡。
 - 2026-08-25：**推式記憶召回上架**——UserPromptSubmit hook 自動透過 qmd 檢索本機記憶庫並注入相關脈絡；同步 BM25 ＋ 背景向量雙層檢索、120 分鐘去重壓制、fail-safe 靜默降級。
 - 2026-07-08：**記憶層主體上架**——install.sh 一鍵安裝、10 分鐘摘要、handoff 交接、記憶卡格式、單 session token 看門狗（claw）。沙盒測試 58 項全部通過＋乾淨環境 dogfooding 驗證後出包。
