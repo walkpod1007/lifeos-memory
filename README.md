@@ -131,7 +131,7 @@ On every prompt submission, the `UserPromptSubmit` hook automatically searches y
 | Variable | Needed for | If unset |
 |---|---|---|
 | `LIFEOS_OWNER_LINE_ID` | marking the owner's LINE messages as "本人✓" in the handoff excerpt | nobody is marked as owner (fail-closed) |
-| `LIFEOS_LINE_PENDING_TOOL` | the LINE receive tool whose results are trusted as `<line_message>` sources (default `mcp__line__get_pending`) | LINE excerpt only trusts the default name |
+| `LIFEOS_LINE_PENDING_TOOL` | the LINE receive tool whose results are trusted as `<line_message>` sources (default `mcp__line__get_pending`) | LINE excerpt only trusts the default name; **if your MCP server names the receive tool differently, every real LINE message will be dropped silently** — set `LIFEOS_LINE_PENDING_TOOL` to its actual name (e.g. `mcp__myline__fetch_pending`) |
 | `LIFEOS_TICKETS_DIR` | closeout section cross-check (`*.md` with `status: closed`) | `$LIFEOS_MEMORY_ROOT/worktickets`; absent = ledger lines only |
 | `LIFEOS_WIKI_DIR` | entity-backfill to-do section | section skipped |
 | `DREAM_DIR` | last-dream section (`*-dream.md` files) | section skipped |
@@ -354,7 +354,7 @@ claw            # 用 claw 代替 claude 開工作 session
 | 變數 | 用途 | 沒設的話 |
 |---|---|---|
 | `LIFEOS_OWNER_LINE_ID` | 讓交接卡摘錄把你本人的 LINE 訊息標成「本人✓」 | 沒有人會被標成本人（fail-closed） |
-| `LIFEOS_LINE_PENDING_TOOL` | 被信任為 `<line_message>` 來源的 LINE 收訊工具全名（預設 `mcp__line__get_pending`） | 只認預設名稱 |
+| `LIFEOS_LINE_PENDING_TOOL` | 被信任為 `<line_message>` 來源的 LINE 收訊工具全名（預設 `mcp__line__get_pending`） | 只認預設名稱；**如果你的 MCP 伺服器把收訊工具取成別的名字，所有真 LINE 訊息都會被靜默丟掉**——把 `LIFEOS_LINE_PENDING_TOOL` 設成它的實際名稱（例如 `mcp__myline__fetch_pending`） |
 | `LIFEOS_TICKETS_DIR` | 收尾帳交叉核對（`status: closed` 的 `*.md`） | 預設 `$LIFEOS_MEMORY_ROOT/worktickets`；不存在就只列帳本行 |
 | `LIFEOS_WIKI_DIR` | 條目回填待辦段 | 整段跳過 |
 | `DREAM_DIR` | 最近一夢段（`*-dream.md`） | 整段跳過 |

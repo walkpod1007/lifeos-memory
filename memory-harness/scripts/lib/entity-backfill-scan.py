@@ -265,7 +265,9 @@ def load_wiki_index():
             files += 1
             stem = fn[:-3]
             title, aliases, tags = parse_frontmatter(path)
-            rel = os.path.join("wiki", sub, fn)
+            # 相對於 WIKI 根目錄（不再寫死 "wiki/"）——本檔比對名冊 key 與 extract_edited_wiki_paths
+            # 都用同一種相對形式（os.path.relpath），使用者把知識庫命名為 kb / vault / notes 都吃得下。
+            rel = os.path.relpath(path, WIKI)
             for name in [stem, title] + aliases:
                 if name and usable_name(name) and name not in index:
                     index[name] = (rel, tags)
@@ -454,10 +456,16 @@ def extract_edited_wiki_paths(path):
                     fp = inp.get("file_path")
                     if not isinstance(fp, str):
                         continue
-                    idx = fp.find("/wiki/")
-                    if idx == -1:
+                    # 不再寫死 "/wiki/"：使用者知識庫可能命名為 kb/vault/notes；
+                    # 只認「fp 絕對路徑確實落在 WIKI 根目錄底下」，取相對路徑加進集合，
+                    # 與 load_wiki_index 的名冊 key 同形式（後端比對才不會漏／誤中）。
+                    try:
+                        fp_abs = os.path.abspath(fp)
+                        wiki_abs = os.path.abspath(WIKI)
+                        if fp_abs == wiki_abs or fp_abs.startswith(wiki_abs + os.sep):
+                            paths.add(os.path.relpath(fp_abs, wiki_abs))
+                    except (OSError, ValueError):
                         continue
-                    paths.add(fp[idx + 1:])
     except OSError:
         pass
     return paths
@@ -492,10 +500,15 @@ def extract_enrich_queue_wiki_paths(today):
                 fp = line.split("\t", 1)[0].strip()
                 if not fp:
                     continue
-                idx = fp.find("/wiki/")
-                if idx == -1:
+                # 同 extract_edited_wiki_paths：不寫死 "/wiki/"，以「絕對路徑是否
+                # 落在 WIKI 根目錄底下」判定，相對路徑加入集合。
+                try:
+                    fp_abs = os.path.abspath(fp)
+                    wiki_abs = os.path.abspath(WIKI)
+                    if fp_abs == wiki_abs or fp_abs.startswith(wiki_abs + os.sep):
+                        paths.add(os.path.relpath(fp_abs, wiki_abs))
+                except (OSError, ValueError):
                     continue
-                paths.add(fp[idx + 1:])
     except OSError:
         pass
     return paths
@@ -634,7 +647,7 @@ def _overflow_count(path=None, exclude=None):
 # 179 列 entry 當場消失（有備份才救回來）。真實世界的同型觸發：wiki 目錄沒掛上、
 # 路徑被換掉、指到退役的雙胞胎目錄、parse_frontmatter 撞權限被 except 吞掉。
 # 處置一律 fail-closed：**寧可這一趟不收，也不要把看不見當成做完了。**
-INDEX_FLOOR = int(os.environ.get("LIFEOS_WIKI_INDEX_FLOOR", "10"))  # 名冊低於這個名稱數就不可信；大庫請調高（例如常態的一成）
+INDEX_FLOOR = int(os.environ.get("LIFEOS_WIKI_INDEX_FLOOR", "1"))  # 名冊低於這個名稱數就不可信；大庫請調高（例如常態的一成）。預設 1：只要目錄存在且有條目就視為可信；門檻由環境變數傳入。
 
 def _index_health(index):
     """回 None＝名冊可信；回一句話＝不可信的理由（呼叫端據此跳過所有「判收掉」）。"""
@@ -1209,7 +1222,7 @@ def main():
     else:
         lines.append("- （無）")
     lines.append("")
-    # ④ 積壓：前幾班提過、到現在都沒人收掉的（裁示 c-backfill-backlog）
+    # ④ 積壓：前幾班提過、到現在都沒人收掉的（c-backfill-backlog 機制）
     # excluded_today 併進來：今天報告版面不顯示（機械處理排除），但若真是使用者提及，
     # 積壓佇列要記住這則，不然這次提及就永久消失（見 split_candidates docstring）。
     # MED-11：label（entry 的顯示名）在這裡淨化；book 的 b 在收集迴圈裡已經淨化過，

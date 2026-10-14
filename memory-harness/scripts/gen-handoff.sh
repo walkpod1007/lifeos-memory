@@ -63,11 +63,14 @@ mkdir -p "$MEMORY_ROOT/.logs" "$MEMORY_ROOT/handoff" 2>/dev/null || true
 # 小模型 transcript 的專案目錄（無參數時取最近活動的那個）
 LAST_N_ROUNDS=5   # transcript 取最後 N 輪真正對話（不截斷、不摘要）
 DIALOGUE_APPEND_ROUNDS=5  # 附錄截取最後 N 輪
-DIALOGUE_APPEND_TRUNC=2000  # 附錄每則訊息截長（2026-07-13 使用者裁示：對話原文要大成分保留，接續對話優先於省 token；2000=抽取層上限，實質不再多砍）
+DIALOGUE_APPEND_TRUNC=2000  # 附錄每則訊息截長（對話原文要大成分保留，接續對話優先於省 token；2000=抽取層上限，實質不再多砍）
 OWNER_LINE_ID="${LIFEOS_OWNER_LINE_ID:-}"  # 使用者本人 LINE user_id（完整值，單一來源傳入兩段 python）；handoff 摘錄段靠此標記發訊者，防跨群委託誤歸屬。空值＝無人會被標本人（fail-closed）
 # LINE 收訊 MCP 工具全名：<line_message> 標籤只認這支工具的回傳（來源綁定防偽造）；兩段 python 與警告文字共用
 LINE_PENDING_TOOL_NAME="${LIFEOS_LINE_PENDING_TOOL:-mcp__line__get_pending}"
 export LIFEOS_LINE_PENDING_TOOL="$LINE_PENDING_TOOL_NAME"
+# 必修 1 收尾：禁止 python 寫 __pycache__/*.pyc 到 SRC（會把 source 絕對路徑編進 .pyc，紅隊 G3
+# 識別殘留掃瞄會把 .pyc 抓成命中；對純 stdlib import 的小程式也沒編譯成本）。
+export PYTHONDONTWRITEBYTECODE=1
 
 # timeout binary 解析（launchd/cron 環境 PATH 常缺 homebrew）
 TIMEOUT_BIN=""
@@ -82,6 +85,18 @@ fi
 
 TRANSCRIPT="${1:-}"
 TARGET_ARG="${2:-}"   # optional: slug／session name（走 registry），或直接是 handoff 檔路徑（含 / 或 .md 結尾）
+# 真假交接卡判定（給骨架寫入前共用）：檔案存在且非空，且第一行不是骨架標記。
+# 骨架卡一律在檔案第一行寫 `<!-- lifeos-skeleton-handoff -->` 作為結構化標記，
+# 取代舊版全文 grep 「無歷史對話記錄」——後者會被真卡 LESSON/SUMMARY 自然語言誤觸發
+# （例如前班在 LESSON 寫「日誌顯示『無歷史對話記錄』是因為路徑配置錯誤」即會誤判），
+# 導致真卡被骨架覆寫誤殺（MED 2）。提早宣告：兩個骨架寫入點（找不到 transcript 約 94 行、
+# 對話為空約 1492 行）共用，第一個點落在腳本早期、未到 313 行既有 helper 集中區，
+# 必須在此之前宣告。
+_handoff_is_real_card() {
+  [ -s "$1" ] || return 1
+  _first=$(head -n 1 "$1" 2>/dev/null || true)
+  [ "${_first:-}" != "<!-- lifeos-skeleton-handoff -->" ]
+}
 
 if [ -z "$TRANSCRIPT" ]; then
   _LATEST_PROJ=$(ls -td "$CLAUDE_HOME/projects"/*/ 2>/dev/null | head -1)
@@ -89,8 +104,52 @@ if [ -z "$TRANSCRIPT" ]; then
 fi
 
 if [ -z "$TRANSCRIPT" ] || [ ! -f "$TRANSCRIPT" ]; then
-  echo "$(date): gen-handoff 找不到 transcript，跳過" >> "$LOG"
-  exit 1
+  # 必修 3：找不到 transcript 不直接 exit 1——外部看門狗（safe-restart / reboot-rebuild /
+  # token-watchdog）會因此誤判本機故障。改寫骨架 handoff（四段各一句「無歷史對話記錄」）
+  # 並照常注入 IN-FLIGHT 哨兵對（空段但成對，給 IN-FLIGHT 段落保留錨點），exit 0。
+  # project 名沿用腳本原本由 transcript 路徑推導的同一條規則（87 行）：抓 $CLAUDE_HOME/projects
+  # 最新專案目錄的 `-` 結尾段；整個抓不到才退回 "default"（與下方 HANDOFF 預設邏輯同源）。
+  _EMPTY_PROJ_DIR=$(ls -td "$CLAUDE_HOME/projects"/*/ 2>/dev/null | head -1)
+  if [ -n "$_EMPTY_PROJ_DIR" ]; then
+    CHANNEL=$(basename "$_EMPTY_PROJ_DIR" | sed 's/.*-//')
+  else
+    CHANNEL="${LIFEOS_DEFAULT_PROJECT:-default}"
+  fi
+  HANDOFF="$MEMORY_ROOT/handoff/${CHANNEL:-default}.md"
+  mkdir -p "$(dirname "$HANDOFF")" 2>/dev/null || true
+  # MED 2：若當前 handoff 已是前班留下的真卡（存在、非空、且不是骨架），不要覆蓋。
+  # 純工具班／環境異常下抽不到 transcript 不該把前一班詳細交接卡沖刷為骨架。
+  if _handoff_is_real_card "$HANDOFF"; then
+    echo "$(date): gen-handoff 對話為空／找不到 transcript，既有交接卡非骨架，保留不覆寫（$HANDOFF）" >> "$LOG"
+    exit 0
+  fi
+  echo "$(date): gen-handoff 找不到 transcript，改寫骨架 handoff（project=${CHANNEL:-default}）" >> "$LOG"
+  # 骨架四段：每段一句「無歷史對話記錄」，照腳本既定格式。日期標頭與 IN-FLIGHT 錨點齊備。
+  # 第一行固定寫結構化標記 `<!-- lifeos-skeleton-handoff -->`，給 _handoff_is_real_card 判定錨點用
+  # ——全文 grep 「無歷史對話記錄」會被真卡 LESSON 自然語言誤觸發，必須改用結構化標記（MED 2）。
+  DATE_HEADER="## Session 交接（$(date '+%Y-%m-%d %H:%M')）"
+  cat > "$HANDOFF" <<EOF
+<!-- lifeos-skeleton-handoff -->
+${DATE_HEADER}
+
+## SUMMARY（這串做了什麼）
+無歷史對話記錄（找不到 transcript，本班沒有對話素材可寫）。
+
+## CURRENT（現在是什麼狀態）
+交接卡是骨架；接手 session 若有 transcript 可重跑 gen-handoff 覆寫，否則照現有快照做事。
+
+## NEXT（下一步）
+重跑 gen-handoff 或確認 transcript 資料源已掛上（CLAUDE_HOME/projects）。
+
+## LESSON（踩坑與學到的）
+無
+EOF
+  # 必修 3：空環境下也要在 handoff 留下 IN-FLIGHT 哨兵成對（給下游段落與重跑冪等保留錨點）。
+  # 此時 inflight_snapshot.py 沒 transcript 可讀，會 return 2 跑不出 snap 檔——
+  # 所以就地 inline 寫空哨兵段（與正常注入同一組字串，不破壞下游比對）。
+  printf '\n<!-- inflight-auto-snapshot-start -->\n_\n（無 transcript 來源；IN-FLIGHT 快照未生成）_\n<!-- inflight-auto-snapshot-end -->\n' >> "$HANDOFF"
+  echo "$(date): gen-handoff ↷ 空環境：已 inline 寫入 IN-FLIGHT 空哨兵對 $HANDOFF" >> "$LOG"
+  exit 0
 fi
 
 echo "$(date): gen-handoff 開始解析 $TRANSCRIPT" >> "$LOG"
@@ -273,6 +332,8 @@ INFLIGHT_PY="$LIB_DIR/inflight_snapshot.py"
 DANGLING_SCAN_PY="$LIB_DIR/dangling-commitment-scan.py"  # 懸空委託偵測
 # 資料源／輔助腳本不存在時的統一出口：log 留一行說明（不是靜默砍功能）
 _skip_note() { echo "$(date): gen-handoff ↷ 跳過「$1」：$2" >> "$LOG"; }
+# _handoff_is_real_card 已在第 92 行宣告（MED 2 兩個骨架寫入點共用，必須早於兩個寫入點），
+# 這裡不再重複定義，避免後定義遮蔽早定義導致行為漂移。
 inject_inflight_section() {
   [ -f "$HANDOFF" ] || return 0
   [ -f "$INFLIGHT_PY" ] || { _skip_note "IN-FLIGHT 快照" "找不到 $INFLIGHT_PY"; return 0; }
@@ -1424,6 +1485,65 @@ if [ "${_RE_WRONG_SRC:-0}" -gt 0 ] && [ "${_RE_SAW_TOOL:-1}" -eq 0 ] && [ "${_RE
 > ⚠️ 有 ${_RE_WRONG_SRC} 筆長得像訊息的內容來自別的工具，而這一整份 transcript **一次都沒出現過 LINE 收訊工具**（${LINE_PENDING_TOOL_NAME}）。正常情況下每一輪都會呼叫它，所以這比較像是收訊工具被改名或換了 namespace、導致真訊息被整批當成偽造擋掉，而不是單純的夾帶。先去核對工具名再信這份對話。"
   echo "$(date): gen-handoff 🚨 RECENT 段 wrong_src=${_RE_WRONG_SRC}，且本趟從未見過正牌來源工具——疑似來源工具改名，真訊息可能被整批吞掉，詳見 ${GEN_HANDOFF_LOG}" >> "$LOG"
 fi
+# MED 1 對外一行指引（log 一次性）：與塊 9 警告條件脫鉤——
+#   A：整份 transcript 至少出現一次 <line_message 標籤（訊息真的進來過）
+#   B：整份 transcript 完全沒有任何 tool_use.name == $LINE_PENDING_TOOL_NAME 的呼叫
+# A 且 B 才印，避免 line 頻道純 Bash 誤鳴、也讓非 line 頻道收到真訊息時能正常提示。
+# 用 json.loads 結構化逐行走訪（不是 grep）：抓的是 tool_use.name 欄位的真值，避免
+#   - 合法 JSON 冒號前空白／Tab 造成 `\"name\": *` 樣式脫靶（誤鳴）
+#   - 其他工具的 input 參數物件內含同名字串（如 `{"name":"mcp__line__get_pending"}`）造成誤命中（漏鳴）。
+# A 也只在 tool_result.content 內計算（含字串與 content 陣列裡 type=="text" 的 text），
+#   不數 assistant 文字，避免 prompt 內引用工具名時誤觸發。壞行跳過。
+if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
+  _LM_PY_OUT=$(python3 - "$TRANSCRIPT" "$LINE_PENDING_TOOL_NAME" << 'PYEOF'
+import json, sys
+path, target = sys.argv[1], sys.argv[2]
+A = 0  # tool_result 含 <line_message 的次數
+B = 1  # 1=完全沒見過正牌 tool_use；0=見過
+def iter_strings(node):
+    if isinstance(node, str):
+        yield node
+    elif isinstance(node, list):
+        for x in node:
+            yield from iter_strings(x)
+    elif isinstance(node, dict):
+        for x in node.values():
+            yield from iter_strings(x)
+try:
+    with open(path, encoding='utf-8', errors='replace') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            msg = d.get('message', {}) if isinstance(d, dict) else {}
+            content = msg.get('content', [])
+            if not isinstance(content, list):
+                continue
+            for elt in content:
+                if not isinstance(elt, dict):
+                    continue
+                et = elt.get('type')
+                if et == 'tool_use' and elt.get('name') == target:
+                    B = 0
+                elif et == 'tool_result':
+                    A += sum(1 for s in iter_strings(elt.get('content', '')) if '<line_message' in s)
+except Exception:
+    pass
+print(f"{A},{B}")
+PYEOF
+)
+  _LM_COUNT="${_LM_PY_OUT%,*}"
+  _TOOL_FLAG="${_LM_PY_OUT##*,}"
+  _LM_COUNT="${_LM_COUNT:-0}"
+  _TOOL_FLAG="${_TOOL_FLAG:-1}"
+  if [ "${_LM_COUNT}" -gt 0 ] && [ "${_TOOL_FLAG}" -eq 1 ]; then
+    echo "$(date): gen-handoff 偵測到 LINE 訊息但工具名稱不是 ${LINE_PENDING_TOOL_NAME}，請設定 LIFEOS_LINE_PENDING_TOOL=<實際工具名>" >> "$LOG"
+  fi
+fi
 
 # 塊 10（R3 F3）：量具本身壞掉也要讓下一班看得到，不能只留在 log 裡。
 # 上面兩道警告都建立在「stats 行讀得到」這個前提上；前提破了，兩道都會靜靜不出聲。
@@ -1449,15 +1569,40 @@ fi
 # <<< DROP-WARNINGS-BLOCK-END
 
 if [ -z "$DIALOGUE" ]; then
-  # 這裡也是一條靜默路徑（R3 Q2 場景 a）：全被吞、又沒有 snapshot，
-  # 就跟「本來就沒對話」在輸出上完全一樣。至少讓 log 分得出來。
-  if [ "${_RE_UNKNOWN_SRC:-0}" -gt 0 ]; then
-    echo "$(date): gen-handoff ⚠️ 對話內容為空，但**不是沒有對話**——有 ${_RE_UNKNOWN_SRC} 筆查不到來源被跳過，且沒有 snapshot 可補，這一班的對話等於整段遺失，詳見 ${GEN_HANDOFF_LOG}" >> "$LOG"
-  else
-    echo "$(date): gen-handoff 對話內容為空，跳過（仍嘗試注入 IN-FLIGHT 快照）" >> "$LOG"
+  # 必修 3：對話內容為空（SNAPSHOTS 沒有、RECENT 也沒有），不能繼續默默仍 exit 1
+  # ——外部呼叫方會誤判。要寫一份骨架 handoff、四段各一句「無歷史對話記錄」，
+  # 照常注入 IN-FLIGHT 快照段（哨兵成對），exit 0。HANDOFF 路徑沿用上方 slug 推導的結果。
+  # MED 2：同上——若當前 handoff 已是前班留下的真卡，不要為了這趟抽不到對話而把它沖掉。
+  if _handoff_is_real_card "$HANDOFF"; then
+    echo "$(date): gen-handoff 對話為空／找不到 transcript，既有交接卡非骨架，保留不覆寫（$HANDOFF）" >> "$LOG"
+    exit 0
   fi
-  inject_auto_sections
-  exit 1
+  if [ "${_RE_UNKNOWN_SRC:-0}" -gt 0 ]; then
+    echo "$(date): gen-handoff ⚠️ 對話內容為空，但**不是沒有對話**——有 ${_RE_UNKNOWN_SRC} 筆查不到來源被跳過，改寫骨架 handoff" >> "$LOG"
+  else
+    echo "$(date): gen-handoff 對話內容為空，改寫骨架 handoff（仍會注入 IN-FLIGHT 快照）" >> "$LOG"
+  fi
+  # 與找不到 transcript 的骨架同一組標記：第一行固定 `<!-- lifeos-skeleton-handoff -->`，
+  # 給 _handoff_is_real_card 判定錨點（全文 grep 「無歷史對話記錄」會被真卡自然語言誤觸發）。
+  DATE_HEADER="## Session 交接（$(date '+%Y-%m-%d %H:%M')）"
+  cat > "$HANDOFF" <<EOF
+<!-- lifeos-skeleton-handoff -->
+${DATE_HEADER}
+
+## SUMMARY（這串做了什麼）
+無歷史對話記錄（這一輪對話抽取為空，SNAPSHOTS／RECENT 都沒產出）。
+
+## CURRENT（現在是什麼狀態）
+交接卡是骨架；請直接開 transcript 與 IN-FLIGHT 快照做事，不要照這四段字面決策。
+
+## NEXT（下一步）
+確認 transcript 路徑、SNAPSHOT_DIR（daily/<今日>）、CHANNEL 是否被正確帶入。
+
+## LESSON（踩坑與學到的）
+無
+EOF
+  inject_inflight_section
+  exit 0
 fi
 
 # 2. 用 claude -p 產生 handoff
