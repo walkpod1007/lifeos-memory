@@ -295,5 +295,92 @@ RC_BAD=$?
 check "L2: settings.json 非法時 install.sh 不會中止 (exit 0)" "[[ $RC_BAD -eq 0 ]]"
 check "L2: settings.json 非法時原檔未被破壞" "grep -q '{invalid json...' '$BAD_SETTINGS'"
 
+echo "— 13. 中文 prompt 同步層：切詞後多次查詢合併（stub 照 qmd 2.8.3 的 AND／逐字連續片語語意） —"
+# 這支 stub 的語意：空白分開的詞一律 AND；含中文的詞＝要求這幾個字在卡片內連續出現；
+# 英文詞＝前綴比對（不分大小寫）。所有 search 呼叫的參數逐行記進 MOCK_ARGV_LOG。
+cat > "$SB/bin/qmd-cjk" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == "search" ]]; then
+    [[ -n "${MOCK_ARGV_LOG:-}" ]] && printf '%s\n' "$*" >> "$MOCK_ARGV_LOG"
+    if [[ -n "${MOCK_SLOW_TERM:-}" && "$2" == *"$MOCK_SLOW_TERM"* ]]; then sleep "${MOCK_SLOW_SECS:-6}"; fi
+    if [[ -n "${MOCK_BROKEN:-}" ]]; then echo "boom" >&2; exit 3; fi
+    python3 - "$2" <<'PYS'
+import json, re, sys
+cards = [
+    ("qmd://vault/db-conn.md", "資料庫連線設定", "正式環境的資料庫連線池要設定上限，逾時三十秒後重試。"),
+    ("qmd://vault/coffee.md", "咖啡豆採購", "每個月訂購兩公斤咖啡豆，淺焙適合手沖。"),
+    ("qmd://vault/trip.md", "旅行計畫", "十二月去京都看楓葉，機票已經訂好。"),
+    ("qmd://vault/redis-note.md", "Redis caching note", "Use redis for caching database query results."),
+]
+q = sys.argv[1].strip()
+words = [w for w in q.split() if w]
+cjk = re.compile(u'[㐀-䶿一-鿿぀-ヿ]')
+out = []
+for fp, title, body in cards:
+    text = title + " " + body
+    ok = bool(words)
+    for w in words:
+        if cjk.search(w):
+            if w not in text:
+                ok = False
+        else:
+            if not re.search(r'\b' + re.escape(w.lower()), text.lower()):
+                ok = False
+    if ok:
+        out.append({"score": 0.62, "file": fp, "title": title, "snippet": body})
+print(json.dumps(out, ensure_ascii=False))
+PYS
+    exit 0
+fi
+echo "[]"
+exit 0
+EOF
+chmod +x "$SB/bin/qmd-cjk"
+ZH_PROMPT="請問資料庫連線池的逾時設定要怎麼調整比較好"
+# 13.0 stub 自身語意：整句原樣當一個詞（舊行為）必零命中；單一 2 字詞有命中
+OLD_STYLE="$("$SB/bin/qmd-cjk" search "$ZH_PROMPT" -n 5 --json)"
+NEW_STYLE="$("$SB/bin/qmd-cjk" search "連線" -n 5 --json)"
+check "stub 語意檢查：整句中文當單一詞 → 零命中" "[[ '$OLD_STYLE' == '[]' ]]"
+check "stub 語意檢查：單一 2 字詞「連線」→ 有命中" "[[ '$NEW_STYLE' == *db-conn.md* ]]"
+
+# 13.a 中文整句 prompt → 同步層命中含其中 2 字詞的卡
+rm -f "$SB/out/13argv.log"
+printf '{"prompt":"%s"}' "$ZH_PROMPT" | PATH="$SB/bin:$PATH" QMD_BIN="$SB/bin/qmd-cjk" MOCK_ARGV_LOG="$SB/out/13argv.log" MEMORY_RECALL_STATE="$SB/state/s13a" bash "$HOOK_SH" > "$SB/out/13a.out" 2>&1
+RC13A=$?
+check "(a) 中文整句：exit 0" "[[ $RC13A -eq 0 ]]"
+check "(a) 中文整句：同步層命中含「連線」的卡（資料庫連線設定）" "grep -q 'db-conn.md' '$SB/out/13a.out'"
+check "(a) 中文整句：不相干的卡（咖啡豆）沒被帶進來" "! grep -q 'coffee.md' '$SB/out/13a.out'"
+check "(a) 中文整句：沒有任何一次查詢把整句原樣送給 qmd" "! grep -qF -- '$ZH_PROMPT' '$SB/out/13argv.log'"
+check "(a) 中文整句：每次查詢都是單一詞（-n 5 --json 前只有一個詞）" "! grep -qE '^search [^ ]+ [^-]' '$SB/out/13argv.log'"
+check "(a) 中文整句：查詢次數 1〜8（預設上限）" "[[ \$(wc -l < '$SB/out/13argv.log') -ge 1 && \$(wc -l < '$SB/out/13argv.log') -le 8 ]]"
+
+# 13.d 切詞結果固定：同句兩次、不同 state，送出的詞集合相同；LIFEOS_RECALL_TERMS 生效
+rm -f "$SB/out/13d1.log" "$SB/out/13d2.log" "$SB/out/13d3.log"
+printf '{"prompt":"%s"}' "$ZH_PROMPT" | PATH="$SB/bin:$PATH" QMD_BIN="$SB/bin/qmd-cjk" MOCK_ARGV_LOG="$SB/out/13d1.log" MEMORY_RECALL_STATE="$SB/state/s13d1" bash "$HOOK_SH" >/dev/null 2>&1
+printf '{"prompt":"%s"}' "$ZH_PROMPT" | PATH="$SB/bin:$PATH" QMD_BIN="$SB/bin/qmd-cjk" MOCK_ARGV_LOG="$SB/out/13d2.log" MEMORY_RECALL_STATE="$SB/state/s13d2" bash "$HOOK_SH" >/dev/null 2>&1
+printf '{"prompt":"%s"}' "$ZH_PROMPT" | PATH="$SB/bin:$PATH" QMD_BIN="$SB/bin/qmd-cjk" LIFEOS_RECALL_TERMS=3 MOCK_ARGV_LOG="$SB/out/13d3.log" MEMORY_RECALL_STATE="$SB/state/s13d3" bash "$HOOK_SH" >/dev/null 2>&1
+check "(d) 同句兩次切詞結果相同" "[[ \$(sort '$SB/out/13d1.log') == \$(sort '$SB/out/13d2.log') && -s '$SB/out/13d1.log' ]]"
+check "(d) LIFEOS_RECALL_TERMS=3 → 恰 3 次查詢" "[[ \$(wc -l < '$SB/out/13d3.log') -eq 3 ]]"
+check "(d) 助詞字（的／了／麼）不會出現在查詢詞裡" "! grep -qE '^search [^ ]*(的|了|麼) ' '$SB/out/13d1.log'"
+
+# 13.b 純英文 prompt：送給 qmd 的參數與改前完全相同（一次呼叫、整句原文、-n 5 --json）
+EN_PROMPT="how to configure database connection in production"
+rm -f "$SB/out/13b.log"
+printf '{"prompt":"%s"}' "$EN_PROMPT" | PATH="$SB/bin:$PATH" QMD_BIN="$SB/bin/qmd-cjk" MOCK_ARGV_LOG="$SB/out/13b.log" MEMORY_RECALL_STATE="$SB/state/s13b" bash "$HOOK_SH" >/dev/null 2>&1
+check "(b) 純英文：恰一次 search 呼叫" "[[ \$(wc -l < '$SB/out/13b.log') -eq 1 ]]"
+check "(b) 純英文：參數與改前相同（search <整句原文> -n 5 --json）" "[[ \$(cat '$SB/out/13b.log') == 'search $EN_PROMPT -n 5 --json' ]]"
+
+# 13.c 失敗與逾時：不擋對話
+printf '{"prompt":"%s"}' "$ZH_PROMPT" | PATH="$SB/bin:$PATH" QMD_BIN="$SB/bin/qmd-cjk" MOCK_BROKEN=1 MEMORY_RECALL_STATE="$SB/state/s13c1" bash "$HOOK_SH" > "$SB/out/13c1.out" 2>&1
+RC13C1=$?
+check "(c) qmd 全壞（exit 3）：整支 exit 0 且無輸出" "[[ $RC13C1 -eq 0 && ! -s '$SB/out/13c1.out' ]]"
+T0=$(date +%s)
+printf '{"prompt":"%s"}' "$ZH_PROMPT" | PATH="$SB/bin:$PATH" QMD_BIN="$SB/bin/qmd-cjk" MOCK_SLOW_TERM="逾時" MOCK_SLOW_SECS=8 MEMORY_RECALL_STATE="$SB/state/s13c2" bash "$HOOK_SH" > "$SB/out/13c2.out" 2>&1
+RC13C2=$?
+T1=$(date +%s)
+check "(c) 含「逾時」的子查詢卡住：整支 exit 0" "[[ $RC13C2 -eq 0 ]]"
+check "(c) 卡住的子查詢被丟掉，在 4 秒內收工" "[[ $((T1-T0)) -le 4 ]]"
+check "(c) 其他子查詢的命中仍保留" "grep -q 'db-conn.md' '$SB/out/13c2.out'"
+
 echo; echo "RESULT: PASS=$PASS FAIL=$FAIL"
 [[ $FAIL -eq 0 ]]

@@ -58,8 +58,15 @@ check "wrapper 匯出記憶目錄並 exec 真 claw" "grep -q 'LIFEOS_MEMORY_ROOT
 check "qmd collection 有接線（路徑在前 --name 在後）" "grep -q 'QMD:collection add $MEM --name memory' '$SB/qmd.calls'"
 check "CLAUDE.md 區塊已寫（含 BEGIN/END）" "grep -qF '<!-- BEGIN lifeos-memory -->' '$CMD' && grep -qF '<!-- END lifeos-memory -->' '$CMD'"
 check "區塊含 @MEMORY.md 自動載入" "grep -qF \"@$MEM/MEMORY.md\" '$CMD'"
+check "首次安裝註冊一條 SessionStart" "python3 -c \"import json;d=json.load(open('$SETTINGS'));x=[h for m in d['hooks']['SessionStart'] for h in m['hooks'] if 'session-start-inject.sh' in h.get('command','')];exit(0 if len(x)==1 and any(m.get('matcher')=='startup|clear' for m in d['hooks']['SessionStart']) else 1)\""
 
 echo "— I2 macOS 卸載（資料保留） —"
+# 先加入別人的 SessionStart，驗證卸載只移除本包那條。
+python3 - "$SETTINGS" <<'PYEOF'
+import json,sys
+p=sys.argv[1]; d=json.load(open(p)); d.setdefault('hooks',{}).setdefault('SessionStart',[]).append({'matcher':'startup|clear','hooks':[{'type':'command','command':'bash /other/hook.sh'}]})
+json.dump(d,open(p,'w'),indent=2)
+PYEOF
 echo "- [測試卡](cards/x.md) — 假資料" >> "$MEM/MEMORY.md"
 "${COMMON[@]}" LIFEOS_FORCE_OS=Darwin bash "$SB/pack/install.sh" --uninstall > "$SB/i2.out" 2>&1
 check "卸載退出碼 0" "[[ $? -eq 0 ]]"
@@ -67,6 +74,8 @@ check "plist 已移除" "[[ ! -f '$PLIST' ]]"
 check "claw 指令已移除" "[[ ! -e '$SB/insbin/claw' ]]"
 check "記憶資料原封不動" "grep -q '測試卡' '$MEM/MEMORY.md'"
 check "CLAUDE.md 區塊已移除" "! grep -qF 'BEGIN lifeos-memory' '$CMD'"
+check "卸載移除本包 SessionStart" "! grep -q 'session-start-inject.sh' '$SETTINGS'"
+check "卸載保留別人 SessionStart" "grep -q '/other/hook.sh' '$SETTINGS'"
 
 echo "— I3 Linux 分支：cron 掛載＋冪等 —"
 rm -rf "$MEM"; rm -f "$SB/crontab.state"
@@ -76,6 +85,7 @@ RC=$?
 check "Linux 安裝退出碼 0" "[[ $RC -eq 0 ]]"
 check "cron 行已掛" "grep -q 'realtime-summary.sh' '$SB/crontab.state'"
 check "既有排程未被吃掉" "grep -q 'existing-job' '$SB/crontab.state'"
+check "SessionStart 重跑不疊加" "python3 -c \"import json;d=json.load(open('$SETTINGS'));x=[h for m in d['hooks']['SessionStart'] for h in m['hooks'] if 'session-start-inject.sh' in h.get('command','')];exit(0 if len(x)==1 else 1)\""
 check "cron 行帶記憶目錄（單引號包住）" "grep -qF \"LIFEOS_MEMORY_ROOT='$MEM'\" '$SB/crontab.state'"
 "${COMMON[@]}" LIFEOS_FORCE_OS=Linux bash "$SB/pack/install.sh" --yes > "$SB/i3b.out" 2>&1
 check "重跑冪等（僅 1 條）" "[[ \$(grep -c 'lifeos-memory' '$SB/crontab.state') -eq 1 ]]"
@@ -114,6 +124,21 @@ check "使用者含 tag 字串的行仍在" "grep -q 'lifeos-memory notes' '$SB/
 check "無標記的同名 claw 檔被保留" "grep -q 'my own claw' '$SB/insbin/claw'"
 # 5d. CLAUDE.md 備份帶時間戳（不覆蓋舊備份）
 check "install 備份帶時間戳" "ls \"$CMD\".bak-lifeos-install.2* >/dev/null 2>&1"
+
+echo "— I6 MEMORY.md 索引大小警告（只警告、不中斷）—"
+MEM6="$SB/mem6"; rm -f "$SB/crontab.state"
+I6ENV=(env PATH="$SB/bin:$PATH" LIFEOS_MEMORY_ROOT="$MEM6" LIFEOS_LAUNCHD_DIR="$SB/launchd"
+       LIFEOS_BIN_DIR="$SB/insbin" LIFEOS_CLAUDE_MD="$CMD" LIFEOS_CLAUDE_SETTINGS="$SETTINGS"
+       LIFEOS_SKIP_ACTIVATE=1 LIFEOS_SKIP_CLAUDE_CHECK=1 LIFEOS_FORCE_OS=Linux)
+"${I6ENV[@]}" bash "$SB/pack/install.sh" --yes > "$SB/i6a.out" 2>&1
+check "I6 正常索引：安裝成功、沒有超限警告、有「在注入上限內」" "[[ \$? -eq 0 ]] && ! grep -q '超過 Claude Code 注入上限' '$SB/i6a.out' && grep -q 'MEMORY.md 在注入上限內' '$SB/i6a.out'"
+python3 -c "
+print('# MEMORY.md — 記憶卡索引')
+for i in range(249): print('- [卡%03d](cards/c%03d.md) — 一行描述' % (i, i))" > "$MEM6/MEMORY.md"
+"${I6ENV[@]}" bash "$SB/pack/install.sh" --yes > "$SB/i6b.out" 2>&1
+RC6=$?
+check "I6 造一份 250 行索引：印出超限警告（含行數）" "grep -q '超過 Claude Code 注入上限（250 行' '$SB/i6b.out'"
+check "I6 超限只警告不中斷（退出碼 0、安裝完成訊息在）" "[[ $RC6 -eq 0 ]] && grep -q '安裝完成' '$SB/i6b.out'"
 
 echo; echo "RESULT: PASS=$PASS FAIL=$FAIL"
 [[ $FAIL -eq 0 ]]

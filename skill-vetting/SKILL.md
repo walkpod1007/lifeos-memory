@@ -23,8 +23,8 @@ created: "2026-03-23"
 TARGET=/tmp/skill-to-vet
 
 # 執行掃描
-python3 ~/life-os/skills/skill-vetting/scripts/scan.py "$TARGET"
-# Exit 0 = 乾淨，Exit 1 = 有問題
+python3 ~/.claude/skills/skill-vetting/scripts/scan.py "$TARGET"
+# Exit 0 = 沒有 CRITICAL／HIGH，Exit 1 = 有 CRITICAL／HIGH（MEDIUM／LOW／INFO 照印但回 0）
 ```
 
 **自動拒絕條件（不進下一步）：**
@@ -47,8 +47,13 @@ grep -rniE \
 
 比對現有能力：
 ```bash
-mcporter list          # MCP servers
-ls ~/life-os/skills/ # 已安裝 skills
+# 守衛：mcporter 缺席就略過 MCP 清單，不要中止流程
+if command -v mcporter >/dev/null 2>&1; then
+  mcporter list          # MCP servers
+else
+  echo "未安裝 mcporter，略過 MCP 清單"
+fi
+ls ~/.claude/skills/ # 已安裝 skills
 ```
 
 **問自己：**
@@ -85,13 +90,13 @@ created: "YYYY-MM-DD"
 
 **格式規範：**
 - 全文 ≤ 80 行
-- 觸發詞不與現有 skill 重疊（對照 `ls ~/life-os/skills/`）
+- 觸發詞不與現有 skill 重疊（對照 `ls ~/.claude/skills/`）
 - 腳本放 `scripts/` 子目錄，並設可執行權限
 - 移除原始來源的品牌標語、多餘說明
 
 **安裝：**
 ```bash
-cp -r "$TARGET" ~/life-os/skills/<skill-name>/
+cp -r "$TARGET" ~/.claude/skills/<skill-name>/
 ```
 
 ## 掃描器限制

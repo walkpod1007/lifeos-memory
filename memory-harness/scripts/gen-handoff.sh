@@ -26,6 +26,8 @@
 #   LIFEOS_LINE_PENDING_TOOL（選配）LINE 收訊 MCP 工具全名，預設 mcp__line__get_pending
 #   LIFEOS_TICKETS_DIR      （選配）工單目錄（*.md、frontmatter 有 status: closed），收尾帳交叉核對用
 #   LIFEOS_WIKI_DIR         （選配）wiki 條目根目錄；沒設就跳過「條目回填待辦」段
+#   LIFEOS_HANDOFF_SLIM     （選配，預設關）=1 或有旗標檔 $MEMORY_ROOT/state/handoff-slim.on：條目回填整段改寫到
+#                           $MEMORY_ROOT/state/entity-backfill/<proj>-latest.md，交接卡只留兩行指路
 #   DREAM_DIR               （選配）夢境檔目錄（*-dream.md）；沒設就跳過「最近一夢」段
 #   LIFEOS_EVENT_STREAM_DIR （選配）工具呼叫事件流目錄，給 IN-FLIGHT (d) 段優先吃；沒有就退回掃 transcript
 #   LIFEOS_SESSION_REGISTRY （選配）sessions.json，slug → handoff 路徑對照；沒有就走預設路徑
@@ -621,7 +623,23 @@ inject_entity_backfill_section() {
     echo "$(date): gen-handoff ⚠️ 條目回填掃描失敗（rc=${_erc}），該段落改印警告行" >> "$GEN_HANDOFF_LOG"
     printf '## 今日條目回填待辦\n\n⚠️ 掃描失敗（rc=%s）——本段缺席不代表今天沒東西可回填，請自行核對逐字稿\n' "$_erc" > "$_eout"
   fi
-  if python3 - "$HANDOFF" "$_eout" >> "$GEN_HANDOFF_LOG" 2>&1 << 'PYEOF'
+  # SLIM（預設關）：LIFEOS_HANDOFF_SLIM=1 或旗標檔 $MEMORY_ROOT/state/handoff-slim.on 存在時，
+  # 整段清單改寫到 $MEMORY_ROOT/state/entity-backfill/<proj>-latest.md，交接卡原位只留兩行指路。
+  # 關閉時不傳額外參數＝輸出與舊版逐位元組相同。輸出目錄只在 GEN_HANDOFF_TEST=1 且位於 /tmp 下才可覆寫。
+  local _ebf_extra=()
+  if [ "${LIFEOS_HANDOFF_SLIM:-0}" = "1" ] || [ -f "$MEMORY_ROOT/state/handoff-slim.on" ]; then
+    local _ebf_dir="$MEMORY_ROOT/state/entity-backfill"
+    if [ "${GEN_HANDOFF_TEST:-}" = "1" ] && [ -n "${ENTITY_BACKFILL_OUT_DIR:-}" ]; then
+      local _ebf_real
+      _ebf_real=$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$ENTITY_BACKFILL_OUT_DIR" 2>/dev/null || echo "")
+      case "$_ebf_real" in
+        /tmp/*|/private/tmp/*) _ebf_dir="$_ebf_real" ;;
+        *) echo "$(date): gen-handoff WARN ENTITY_BACKFILL_OUT_DIR='${ENTITY_BACKFILL_OUT_DIR}' 不在 /tmp 或 /private/tmp 下，已忽略" >> "$GEN_HANDOFF_LOG" ;;
+      esac
+    fi
+    _ebf_extra=("${_ebf_dir}/${_SLUG:-$CHANNEL}-latest.md" "state/entity-backfill/${_SLUG:-$CHANNEL}-latest.md")
+  fi
+  if python3 - "$HANDOFF" "$_eout" ${_ebf_extra[@]+"${_ebf_extra[@]}"} >> "$GEN_HANDOFF_LOG" 2>&1 << 'PYEOF'
 import sys, os, tempfile
 handoff, out_path = sys.argv[1], sys.argv[2]
 START = "<!-- entity-backfill-start -->"
@@ -636,6 +654,33 @@ for _m in ("inflight-auto-snapshot-start", "inflight-auto-snapshot-end",
            "entity-backfill-start", "entity-backfill-end",
            "last-dream-start", "last-dream-end"):
     body_txt = body_txt.replace(f"<!-- {_m} -->", f"⟦{_m}⟧")
+if len(sys.argv) > 3:
+    # SLIM：整段（同標記、同消毒）原子寫到 latest.md，交接卡原位只留兩行指路。
+    # latest.md 寫不成就退回舊行為（整段留在交接卡），不讓清單憑空消失。
+    import re
+    _latest, _rel = sys.argv[3], sys.argv[4]
+    try:
+        os.makedirs(os.path.dirname(_latest), exist_ok=True)
+        _lfd, _ltmp = tempfile.mkstemp(prefix=".entity-latest-", dir=os.path.dirname(_latest))
+        try:
+            with os.fdopen(_lfd, "w", encoding="utf-8") as _lf:
+                _lf.write(START + "\n" + body_txt + "\n" + END)
+            os.replace(_ltmp, _latest)
+        except Exception:
+            try:
+                os.unlink(_ltmp)
+            except OSError:
+                pass
+            raise
+        _m1 = re.search(r"回填候選\s*(\d+)\s*筆", body_txt)
+        _m2 = re.search(r"建卡候選\s*(\d+)\s*筆", body_txt)
+        _m3 = re.search(r"### ④ 積壓：[^\n（]*（(\d+)\s*筆）", body_txt)
+        _n = str(int(_m1.group(1)) + (int(_m2.group(1)) if _m2 else 0)) if _m1 else "?"
+        _mm = _m3.group(1) if _m3 else "?"
+        body_txt = ("## 今日條目回填待辦\n"
+                    f"條目回填候選 {_n} 筆、積壓 {_mm} 筆：{_rel}（清單有東西不等於該寫）")
+    except Exception as _e:
+        print("entity-backfill latest.md 寫入失敗，退回整段留在交接卡:", type(_e).__name__, _e)
 block = START + "\n" + body_txt + "\n" + END
 body = open(handoff, encoding="utf-8", errors="replace").read()
 if START in body and END in body:

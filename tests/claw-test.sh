@@ -39,6 +39,7 @@ chmod +x "$SB/scripts/"*
 MEM="$SB/memory"
 ENVV=(env PATH="$SB/bin:$PATH" LIFEOS_MEMORY_ROOT="$MEM" CLAUDE_HOME="$SB/home/.claude"
      LIFEOS_TOKEN_THRESHOLD=1000 LIFEOS_CHECK_INTERVAL=1
+     LIFEOS_WRAP_QUIET_SECS=1 LIFEOS_WRAP_POLL_SECS=1   # 斷頭緩衝縮到 1 秒，C7 不必真等 60 秒
      CLAW_RESPAWN_DELAY=0 CLAW_FAST_DEATH_SECS=60 CLAW_MAX_FAST_DEATHS=3)
 run_claw() {  # run_claw <輸出檔> [claw 參數…]（於 $SB/work 執行，背景）
     # pid 走全域 CLAW_PID，不能 echo $! 給 $() 接——命令替換會等背景子孫關閉

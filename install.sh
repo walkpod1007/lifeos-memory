@@ -40,6 +40,7 @@ PLIST_DST="$LAUNCHD_DIR/$LABEL.plist"
 CLAUDE_MD="${LIFEOS_CLAUDE_MD:-$HOME/.claude/CLAUDE.md}"
 CLAUDE_SETTINGS="${LIFEOS_CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
 RECALL_HOOK_SH="$SCRIPTS/memory-recall-hook.sh"
+SESSION_START_HOOK_SH="$SCRIPTS/session-start-inject.sh"
 BLOCK_BEGIN="<!-- BEGIN lifeos-memory -->"
 BLOCK_END="<!-- END lifeos-memory -->"
 
@@ -84,12 +85,11 @@ if [[ "$UNINSTALL" == "1" ]]; then
             warn "$BIN_DIR/claw 缺本包識別標記，可能是你自己的檔案，保留不動"
         fi
     fi
-    # 對稱移除 settings.json 裡的召回 hook：只刪 command 含 memory-recall-hook.sh 的項，
-    # matcher 物件刪空就整個拿掉，其他 hooks / 事件 / 頂層鍵一律不碰
-    if [[ -f "$CLAUDE_SETTINGS" ]] && grep -qF "memory-recall-hook.sh" "$CLAUDE_SETTINGS" 2>/dev/null; then
+    # 對稱移除 settings.json 裡的召回 hook 與 SessionStart 交接注入 hook。
+    if [[ -f "$CLAUDE_SETTINGS" ]] && grep -qE 'memory-recall-hook\.sh|session-start-inject\.sh' "$CLAUDE_SETTINGS" 2>/dev/null; then
         _bak="$CLAUDE_SETTINGS.bak-lifeos-uninstall.$(date +%Y%m%d%H%M%S)"
         if ! cp "$CLAUDE_SETTINGS" "$_bak"; then
-            warn "備份失敗，保守起見不動 ${CLAUDE_SETTINGS}（自己刪 memory-recall-hook.sh 那條 hook）"
+            warn "備份失敗，保守起見不動 ${CLAUDE_SETTINGS}（自己刪 memory-recall-hook.sh 與 session-start-inject.sh 那兩條 hook）"
         elif python3 - "$CLAUDE_SETTINGS" <<'PYEOF'
 import json, sys
 path = sys.argv[1]
@@ -107,20 +107,35 @@ if isinstance(ups, list):
         if isinstance(m, dict) and isinstance(m.get("hooks"), list):
             m["hooks"] = [h for h in m["hooks"]
                           if not (isinstance(h, dict)
-                                  and "memory-recall-hook.sh" in str(h.get("command", "")))]
+                                  and ("memory-recall-hook.sh" in str(h.get("command", ""))
+                                       or "session-start-inject.sh" in str(h.get("command", ""))))]
             if m["hooks"]:
                 kept_matchers.append(m)
         else:
             kept_matchers.append(m)
     data["hooks"]["UserPromptSubmit"] = kept_matchers
+ss = data.get("hooks", {}).get("SessionStart")
+if isinstance(ss, list):
+    kept_matchers = []
+    for m in ss:
+        if isinstance(m, dict) and isinstance(m.get("hooks"), list):
+            m["hooks"] = [h for h in m["hooks"]
+                          if not (isinstance(h, dict)
+                                  and "session-start-inject.sh" in str(h.get("command", "")))]
+            if m["hooks"]:
+                kept_matchers.append(m)
+        else:
+            kept_matchers.append(m)
+    if kept_matchers: data["hooks"]["SessionStart"] = kept_matchers
+    else: data["hooks"].pop("SessionStart", None)
 with open(path, "w", encoding="utf-8") as f:
     json.dump(data, f, indent=2, ensure_ascii=False)
     f.write("\n")
 PYEOF
         then
-            ok "settings.json 裡的召回 hook 已移除（備份：${_bak}）"
+            ok "settings.json 裡的召回與 SessionStart hook 已移除（備份：${_bak}）"
         else
-            warn "settings.json 解析失敗，保留原檔不動（備份：${_bak}）——自己刪 memory-recall-hook.sh 那條 hook"
+            warn "settings.json 解析失敗，保留原檔不動（備份：${_bak}）——自己刪 memory-recall-hook.sh 與 session-start-inject.sh 那兩條 hook"
         fi
     fi
     if [[ -f "$CLAUDE_MD" ]] && grep -qF "$BLOCK_BEGIN" "$CLAUDE_MD"; then
@@ -346,6 +361,48 @@ else
     warn "$CLAUDE_SETTINGS 不是合法 JSON——跳過 hook 註冊（其餘安裝照常）。修好後重跑 ./install.sh 即可補上"
 fi
 
+# SessionStart：startup|clear 時機械注入專案交接卡。冪等且對稱卸載。
+say "註冊 SessionStart 交接卡注入 hook → $CLAUDE_SETTINGS"
+if python3 - "$CLAUDE_SETTINGS" "$SESSION_START_HOOK_SH" <<'PYEOF'
+import json, os, sys
+path, hook_sh = sys.argv[1], sys.argv[2]
+data = {}
+if os.path.exists(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            content = f.read().strip()
+        data = json.loads(content) if content else {}
+    except Exception:
+        sys.exit(1)
+if not isinstance(data, dict): sys.exit(1)
+hooks = data.setdefault("hooks", {})
+if not isinstance(hooks, dict): sys.exit(1)
+ss = hooks.setdefault("SessionStart", [])
+if not isinstance(ss, list): sys.exit(1)
+command = 'bash "%s"' % hook_sh
+registered = False
+for m in ss:
+    if isinstance(m, dict) and isinstance(m.get("hooks"), list):
+        for h in m["hooks"]:
+            if isinstance(h, dict) and "session-start-inject.sh" in str(h.get("command", "")):
+                h["command"] = command; h["type"] = "command"; registered = True
+if not registered:
+    target = None
+    for m in ss:
+        if isinstance(m, dict) and m.get("matcher") == "startup|clear" and isinstance(m.get("hooks"), list):
+            target = m; break
+    if target is None:
+        target = {"matcher": "startup|clear", "hooks": []}; ss.append(target)
+    target["hooks"].append({"type": "command", "command": command})
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(data, f, indent=2, ensure_ascii=False); f.write("\n")
+PYEOF
+then
+    ok "SessionStart hook 已註冊（重跑冪等，不疊加）"
+else
+    warn "$CLAUDE_SETTINGS 不是合法 JSON——跳過 SessionStart hook 註冊（其餘安裝照常）"
+fi
+
 # ─────────────────── 6. CLAUDE.md 開機區塊 ───────────────────
 # 制度是行為不是檔案：沒有這塊，Claude 不會主動讀記憶（索引載入靠這裡的 @include）
 INSTALL_BLOCK=1
@@ -387,10 +444,25 @@ fi
 # ─────────────────── 7. 冒煙測試 ───────────────────
 say "冒煙測試"
 
-for _s in "$SCRIPTS/realtime-summary.sh" "$SCRIPTS/gen-handoff.sh" "$SCRIPTS/watchdog.sh" "$SCRIPTS/claw" "$RECALL_HOOK_SH"; do
+for _s in "$SCRIPTS/realtime-summary.sh" "$SCRIPTS/gen-handoff.sh" "$SCRIPTS/watchdog.sh" "$SCRIPTS/claw" "$RECALL_HOOK_SH" "$SESSION_START_HOOK_SH"; do
     bash -n "$_s" || die "語法錯誤：$_s"
 done
-ok "五支腳本語法全過"
+ok "六支腳本語法全過"
+
+# MEMORY.md 索引大小：Claude Code 開場只注入前 200 行／25000 個 UTF-16 單位，超過的尾巴會被截掉
+# （session 看得到一行截斷警告，但不會說截掉哪幾張卡）。只印警告，不中斷安裝。
+_SIZE_PY="$SCRIPTS/lib/memory-index-size.py"
+if [[ -f "$_SIZE_PY" && -f "$MEMORY_ROOT/MEMORY.md" ]]; then
+    _sz=$(python3 "$_SIZE_PY" "$MEMORY_ROOT/MEMORY.md" 2>/dev/null || echo "")
+    read -r _sz_lines _sz_units _sz_lt _sz_ct <<< "$_sz"
+    if [[ -z "${_sz_ct:-}" ]]; then
+        warn "MEMORY.md 大小量測失敗，略過（不影響安裝）"
+    elif [[ "$_sz_lt" == "1" || "$_sz_ct" == "1" ]]; then
+        warn "MEMORY.md 超過 Claude Code 注入上限（${_sz_lines} 行／${_sz_units} 單位；上限 200 行／25000 單位），尾端的卡會被截掉——把舊卡索引搬進子索引或精簡"
+    else
+        ok "MEMORY.md 在注入上限內（${_sz_lines} 行／${_sz_units} 單位）"
+    fi
+fi
 
 if [[ -z "${LIFEOS_SKIP_CLAUDE_CHECK:-}" ]]; then
     _out=$("$TIMEOUT_BIN" 60 claude -p "只回兩個字母：OK" --model haiku 2>/dev/null || echo "")

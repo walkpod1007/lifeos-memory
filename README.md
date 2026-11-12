@@ -24,20 +24,24 @@ All of it grew out of a personal automation system (Life-OS) that runs every sin
 **Memory layer (the main body of this repo, shipped):**
 
 ```
-install.sh                    One-command installer (dependency check → create dirs → schedule jobs → install claw → register recall hook → smoke test)
+install.sh                    One-command installer (dependency check → create dirs → schedule jobs → install claw → register recall hook → register SessionStart hook → smoke test)
 memory-harness/scripts/       claw (session launcher), watchdog (token guard),
                               gen-handoff (handoff writer, with in-flight snapshot),
                               feedback-to-pitfall (promote auto-memory feedback files to pitfall cards),
-                              lib/ (helpers gen-handoff calls: in-flight snapshot, dangling-commitment scan, entity-backfill scan, ...),
+                              lib/ (helpers gen-handoff calls: in-flight snapshot, dangling-commitment scan, entity-backfill scan, memory-index-size, ...),
                               realtime-summary (10-minute summarizer; superseded by memory-os notes/),
-                              memory-recall-hook (push memory recall hook; superseded by memory-os recall/)
+                              memory-recall-hook (push memory recall hook; superseded by memory-os recall/),
+                              session-start-inject (SessionStart hook; injects the project handoff card into a new session's opening)
 memory-cards/SKILL.md         How to write memory cards (atomic card + pitfall card formats and citation flow)
-tests/                        Sandboxed test suite (33 install + 25 claw + 39 recall-hook + 36 gen-handoff checks; ships only when every one passes)
+skill-author/                 skill-author skill + references/failure-modes.md (six failure modes for writing skills, with worked examples)
+skill-vetting/                skill-vetting skill (scan.py + references/patterns.md)
+tests/                        Sandboxed test suite (40 install + 25 claw + 56 recall-hook + 71 gen-handoff
+                              + 41 realtime-summary + 48 session-start-inject + 5 skill-vetting + 20 watchdog-wrap
+                              checks; ships only when every one passes)
 ```
 
-**Skill-making trio** (ready to use) — the entry point for "teaching Claude your own way of working":
+**Skill-making pair** (ready to use) — the entry point for "teaching Claude your own way of working":
 
-- "Turn this SOP document of mine into a skill" → `doc-to-skill` distills it into a proper SKILL.md
 - "Build me a skill for X from scratch" → `skill-author`, a standard pipeline with red-team review built in
 - "Is this skill I grabbed off the internet safe?" → `skill-vetting` reviews it before formatting and installing
 
@@ -96,6 +100,8 @@ Everything else works exactly like `claude`. Two extra things happen in the back
 2. **Handoff and respawn**: when token usage crosses the 150,000 threshold, it automatically writes a handoff file → ends the old session →
    starts a new session that reads the handoff and continues. You'll see the session restart; the work doesn't get interrupted.
 
+The 150,000 default suits a ~200k context window. On a 1M-window model, raise it with `LIFEOS_TOKEN_THRESHOLD` (e.g. `300000` for a 1M-window Opus line). Once the threshold is crossed, the watchdog first waits for the current round to finish — it only kills once the transcript has been quiet for a while, and at the latest after 10 minutes (`LIFEOS_WRAP_MAX_WAIT`).
+
 To make every session start with its memory loaded, add one line to your project's `CLAUDE.md`:
 
 ```
@@ -118,11 +124,31 @@ On every prompt submission, the `UserPromptSubmit` hook automatically searches y
 | Variable | Default | Description |
 |---|---|---|
 | `MEMORY_RECALL_DISABLE` | `0` | Set to `1` to disable the recall hook entirely |
-| `MEMORY_RECALL_MIN` | `0.3` | Minimum score threshold for sync layer BM25 search |
+| `MEMORY_RECALL_MIN` | `0.3` | Minimum score threshold for the sync layer's BM25 search. The scale is unchanged (every sub-query is still one ordinary `qmd search` on the same 0–1 scale), so the 0.3 default still means the same thing; but Chinese prompts now hit more often than before, because the prompt is split into terms and each term is searched separately |
 | `MEMORY_RECALL_VEC_MIN` | `0.48` | Minimum score threshold for background semantic/vector search |
 | `MEMORY_RECALL_MAX` | `3` | Maximum number of memory items injected per turn |
 | `MEMORY_RECALL_STATE` | `~/lifeos-memory/.recall-state` | State directory for dedup history and preheated vector cache |
 | `QMD_BIN` | `qmd` (from PATH) | Path to `qmd` binary executable |
+| `LIFEOS_RECALL_TERMS` | `8` | How many query terms a Chinese prompt is split into (1–16). Lower it if recall feels noisy; raise `MEMORY_RECALL_MIN` instead if you want fewer but better hits |
+
+### Memory layer — watchdog / summarizer / session start
+
+| Variable | Default | Description |
+|---|---|---|
+| `LIFEOS_TOKEN_THRESHOLD` | `150000` | Token usage that triggers the watchdog (handoff + respawn). Raise it on a 1M-window model |
+| `LIFEOS_CHECK_INTERVAL` | `60` | How often the watchdog checks token usage (seconds) |
+| `LIFEOS_WRAP_POLL_SECS` | `15` | Head-guard buffer: how often the watchdog re-checks whether the current round is still running (seconds) |
+| `LIFEOS_WRAP_QUIET_SECS` | `60` | Head-guard buffer: how long the transcript must be quiet before the current round counts as finished (seconds) |
+| `LIFEOS_WRAP_MAX_WAIT` | `600` | Head-guard buffer: longest wait for the current round to finish before killing anyway (seconds) |
+| `LIFEOS_MEMORY_ROOT` | `~/lifeos-memory` | Memory root directory used by the handoff writer, the watchdog and the SessionStart hook |
+| `LIFEOS_SUMMARY_MODEL` | `haiku` | Model used by the 10-minute summarizer |
+| `LIFEOS_SUMMARY_RETRY_UNIT` | `2` | Backoff unit (seconds) between summary retries; the i-th retry sleeps i × unit |
+| `LIFEOS_INDEX_SKIP_WARN_EVERY` | `36` | Warn after this many consecutive rounds skipped because someone else was writing the index |
+| `LIFEOS_INDEX_SKIP_COUNT_FILE` | `~/lifeos-memory/.checkpoints/index-skip.count` | File that keeps the consecutive-skip counter |
+| `LIFEOS_WATCH` | `auto` | Which projects the summarizer watches (project directory names under `~/.claude/projects/`) |
+| `LIFEOS_QMD_COLLECTION` | `memory` | qmd index name; set to an empty string to disable the vector layer |
+| `LIFEOS_INJECT_CHAR_CAP` | `4000` | Character budget for the handoff card injected by the SessionStart hook (clamped to at most 9700) |
+| `LIFEOS_CLAUDE_BIN` | `claude` (from PATH) | Path to the `claude` executable used by `claw` |
 
 ### gen-handoff: optional data sources
 
@@ -130,15 +156,24 @@ On every prompt submission, the `UserPromptSubmit` hook automatically searches y
 
 | Variable | Needed for | If unset |
 |---|---|---|
+| `LIFEOS_HANDOFF_MODEL` | model used to write the handoff (default `haiku`) | `haiku` is used |
+| `HANDOFF_STALE_HOURS` | how old a handoff may be before it is treated as stale (default `18` hours) | `18` |
+| `LIFEOS_HANDOFF_SLIM` | `1` moves the entity-backfill section out of the handoff card and writes it to `$LIFEOS_MEMORY_ROOT/state/entity-backfill/<proj>-latest.md` instead | `0` (the section stays in the handoff card); a flag file at `$LIFEOS_MEMORY_ROOT/state/handoff-slim.on` has the same effect |
 | `LIFEOS_OWNER_LINE_ID` | marking the owner's LINE messages as "本人✓" in the handoff excerpt | nobody is marked as owner (fail-closed) |
 | `LIFEOS_LINE_PENDING_TOOL` | the LINE receive tool whose results are trusted as `<line_message>` sources (default `mcp__line__get_pending`) | LINE excerpt only trusts the default name; **if your MCP server names the receive tool differently, every real LINE message will be dropped silently** — set `LIFEOS_LINE_PENDING_TOOL` to its actual name (e.g. `mcp__myline__fetch_pending`) |
+| `LIFEOS_LINE_SEND_TOOLS` | comma-separated names of the LINE send tools the redelivery check recognises (default `mcp__line__push,mcp__line__reply`) | the defaults are used |
 | `LIFEOS_TICKETS_DIR` | closeout section cross-check (`*.md` with `status: closed`) | `$LIFEOS_MEMORY_ROOT/worktickets`; absent = ledger lines only |
 | `LIFEOS_WIKI_DIR` | entity-backfill to-do section | section skipped |
-| `DREAM_DIR` | last-dream section (`*-dream.md` files) | section skipped |
+| `LIFEOS_WIKI_SUBDIRS` | sub-directories of the wiki that are scanned for entity backfill (default `entities,sources,concepts`) | the defaults are used |
+| `LIFEOS_WIKI_INDEX_FLOOR` | minimum number of wiki entries for the index to be trusted (default `1`) | `1` — the index is trusted as soon as the directory exists and holds entries |
+| `LIFEOS_TRANSCRIPT_DIRS` | colon-separated extra transcript directories to scan (e.g. another config store) | only the current store is scanned |
+| `LIFEOS_STORES_ROOT` | root of the other config stores to scan | only the current store is scanned |
 | `LIFEOS_EVENT_STREAM_DIR` | in-flight (d) prefers a tool-call event stream | falls back to scanning the transcript |
 | `LIFEOS_SESSION_REGISTRY` | slug → handoff path lookup (`sessions.json`) | default path `$LIFEOS_MEMORY_ROOT/handoff/<proj>.md` |
+| `DREAM_DIR` | last-dream section (`*-dream.md` files) | section skipped |
+| `ALERT_INBOX` | file the entity-backfill scan appends an alert to | no alert file is written (the handoff card is still printed) |
 
-`feedback-to-pitfall.sh` (optional) promotes Claude Code auto-memory `type: feedback` files into pitfall cards under `cards/pitfall/`, adds the index line to `MEMORY.md`, then deletes the original; `--dry-run` shows what it would do.
+`feedback-to-pitfall.sh` (optional) promotes Claude Code auto-memory `type: feedback` files into pitfall cards under `cards/pitfall/`, adds the index line to `MEMORY.md`, then deletes the original; `--dry-run` shows what it would do. Its data sources are configured with `LIFEOS_FEEDBACK_DIR` (where the feedback files live; defaults to the auto-memory directory of the current project) and `LIFEOS_SOUL_FILE` (an optional rules file — e.g. your resident `CLAUDE.md` — to append a one-line summary to).
 
 ## Memory layer — uninstall
 
@@ -154,18 +189,18 @@ On every prompt submission, the `UserPromptSubmit` hook automatically searches y
 - **It stops after several respawns in a row**: that's the storm brake (3 deaths within 60 seconds stops the loop); check `~/lifeos-memory/.logs/`, then run `claw` manually
 - Anything else: open an issue and attach the matching log from `~/lifeos-memory/.logs/`
 
-## Skill-making trio — install
+## Skill-making pair — install
 
-If you already have Claude Code, this takes about a minute. Copy the three skill directories into `~/.claude/skills/`:
+If you already have Claude Code, this takes about a minute. Copy the two skill directories into `~/.claude/skills/`:
 
 ```bash
 mkdir -p ~/.claude/skills
-for s in doc-to-skill skill-author skill-vetting; do
+for s in skill-author skill-vetting; do
   cp -R "$s" ~/.claude/skills/
 done
 ```
 
-The skills land in `~/.claude/skills/<name>/` and Claude Code discovers them on startup — no config changes needed. To verify: open a `claude` conversation and say "turn this document into a skill"; if `doc-to-skill` triggers, you're all set.
+The skills land in `~/.claude/skills/<name>/` and Claude Code discovers them on startup — no config changes needed. To verify: open a `claude` conversation and say "build me a skill for X"; if `skill-author` triggers, you're all set.
 
 ## Starting from a brand-new Mac
 
@@ -214,6 +249,7 @@ Identifying information from the original system was replaced with placeholders 
 
 ## History
 
+- 2026-11-12: **Public refresh — the living system's memory-continuity fixes ported in** — head-guard buffer (the watchdog now waits for the current round to finish before killing, up to 10 minutes); summary lock and index-write collision guard; simplified-Chinese re-summarization; Chinese recall (the prompt is split into terms, each term is searched separately and the hits are merged); the entity-backfill section moved out of the handoff card behind a switch (off by default); an index-size check; the SessionStart hook injects the project handoff card into a new session; two skill fixes (`skill-vetting` exit code and guards, `skill-author` scrubbed of private references and gained a `failure-modes` reference file); `doc-to-skill` removed from this pack.
 - 2026-10-14: **`gen-handoff` updated to the live feature set (scrubbed)** — in-flight snapshot (dispatched background tasks, latest user requests, orphan outputs, touched files), closeout ledger, dangling-commitment scan, entity-backfill to-do, last-dream; helpers moved into `memory-harness/scripts/lib/`; `feedback-to-pitfall.sh` added; 36 new sandbox checks.
 - 2026-10-14: **Companion repo [memory-os](https://github.com/walkpod1007/memory-os) published** — nightly observation notes, `recall-router`, qmd search. The 10-minute summarizer and the recall hook here are marked superseded by it; pitfall cards, watchdog, handoff and claw stay here.
 - 2026-08-25: **Push-style memory recall shipped** — UserPromptSubmit hook automatically searches local memory base via qmd and injects relevant context; dual-layer BM25 + vector search with 120-minute dedup suppression and fail-safe silent degradation.
@@ -248,20 +284,23 @@ Identifying information from the original system was replaced with placeholders 
 **記憶層（本 repo 主體，已上架）**：
 
 ```
-install.sh                    一鍵安裝（依賴檢查→建目錄→掛排程→裝 claw→註冊召回 hook→冒煙測試）
+install.sh                    一鍵安裝（依賴檢查→建目錄→掛排程→裝 claw→註冊召回 hook→註冊 SessionStart hook→冒煙測試）
 memory-harness/scripts/       claw（session 啟動器）、watchdog（token 看門狗）、
                               gen-handoff（交接檔，含在途快照）、
                               feedback-to-pitfall（把 auto memory 的 feedback 檔升格成踩坑卡）、
-                              lib/（gen-handoff 呼叫的輔助腳本：在途快照、懸空委託掃描、條目回填掃描等）、
+                              lib/（gen-handoff 呼叫的輔助腳本：在途快照、懸空委託掃描、條目回填掃描、索引體積量測等）、
                               realtime-summary（10 分鐘摘要；已由 memory-os notes/ 取代）、
-                              memory-recall-hook（推式記憶召回 hook；已由 memory-os recall/ 取代）
+                              memory-recall-hook（推式記憶召回 hook；已由 memory-os recall/ 取代）、
+                              session-start-inject（SessionStart hook；新 session 開場時注入專案交接卡）
 memory-cards/SKILL.md         記憶卡寫法（atom 卡＋踩坑卡格式與引用流程）
-tests/                        沙盒測試套件（install 33 項、claw 25 項、召回 hook 39 項、gen-handoff 36 項，全部通過才出包）
+skill-author/                 skill-author 技能＋references/failure-modes.md（寫技能的六大失敗模式，含正反例）
+skill-vetting/                skill-vetting 技能（scan.py＋references/patterns.md）
+tests/                        沙盒測試套件（install 40 項、claw 25 項、召回 hook 56 項、gen-handoff 71 項、
+                              realtime-summary 41 項、session-start-inject 48 項、skill-vetting 5 項、watchdog-wrap 20 項，全部通過才出包）
 ```
 
-**造技能三件套**（即裝即用）——「把你自己的工作方式教給 Claude」的入口：
+**造技能兩件套**（即裝即用）——「把你自己的工作方式教給 Claude」的入口：
 
-- 「把我這份 SOP 文件變成一個 skill」→ `doc-to-skill` 蒸餾成正式 SKILL.md
 - 「幫我從零做一個 XX skill」→ `skill-author` 標準流程，內建紅隊審查
 - 「網路上抓的這個 skill 安全嗎？」→ `skill-vetting` 審查過了才格式化安裝
 
@@ -319,6 +358,8 @@ claw            # 用 claw 代替 claude 開工作 session
 2. **交接重啟**：token 用量超過 150,000 門檻時，自動寫交接檔 → 結束舊 session →
    開新 session 並讓它讀交接檔接續工作。你會看到 session 重啟，工作不會中斷。
 
+預設 150,000 適合約 200k 視窗。用 1M 視窗模型時可用 `LIFEOS_TOKEN_THRESHOLD` 調高（1M 視窗的 Opus 線可用 300000）。撞門檻後，看門狗會先等當前這一輪收尾（transcript 靜止一段時間才算這輪結束），最長等 10 分鐘（`LIFEOS_WRAP_MAX_WAIT`）才真的殺掉並重生。
+
 想讓每個 session 開場就帶著記憶，在專案的 `CLAUDE.md` 加一行：
 
 ```
@@ -341,11 +382,31 @@ claw            # 用 claw 代替 claude 開工作 session
 | 環境變數 | 預設值 | 說明 |
 |---|---|---|
 | `MEMORY_RECALL_DISABLE` | `0` | 設為 `1` 停用推式記憶召回 hook |
-| `MEMORY_RECALL_MIN` | `0.3` | 同步層 BM25 檢索門檻 |
+| `MEMORY_RECALL_MIN` | `0.3` | 同步層 BM25 檢索門檻。刻度沒變（每個子查詢仍是一次普通的 `qmd search`，同一套 0〜1 刻度），所以預設 0.3 的意義照舊；差別是中文 prompt 現在會切成詞各查一次再合併，同樣門檻下中文會比以前多命中 |
 | `MEMORY_RECALL_VEC_MIN` | `0.48` | 背景向量層語意檢索門檻 |
 | `MEMORY_RECALL_MAX` | `3` | 每輪最多注入記憶條數 |
 | `MEMORY_RECALL_STATE` | `~/lifeos-memory/.recall-state` | 去重歷史與快取狀態目錄 |
 | `QMD_BIN` | `qmd`（從 PATH 找） | `qmd` 執行檔路徑 |
+| `LIFEOS_RECALL_TERMS` | `8` | 中文 prompt 最多切成幾個查詢詞（1〜16）。嫌召回太雜就調低它；想收少一點但要準就調高 `MEMORY_RECALL_MIN` |
+
+### 記憶層 — 看門狗／摘要器／開場注入
+
+| 環境變數 | 預設值 | 說明 |
+|---|---|---|
+| `LIFEOS_TOKEN_THRESHOLD` | `150000` | 觸發看門狗（交接＋重生）的 token 門檻。1M 視窗模型可調高 |
+| `LIFEOS_CHECK_INTERVAL` | `60` | 看門狗多久檢查一次 token 用量（秒） |
+| `LIFEOS_WRAP_POLL_SECS` | `15` | 斷頭緩衝：多久檢查一次當前這一輪是否還在跑（秒） |
+| `LIFEOS_WRAP_QUIET_SECS` | `60` | 斷頭緩衝：transcript 靜止多久才算這輪結束（秒） |
+| `LIFEOS_WRAP_MAX_WAIT` | `600` | 斷頭緩衝：等當前這一輪收尾最長等多久就照殺（秒） |
+| `LIFEOS_MEMORY_ROOT` | `~/lifeos-memory` | 交接腳本、看門狗、SessionStart hook 用的記憶根目錄 |
+| `LIFEOS_SUMMARY_MODEL` | `haiku` | 10 分鐘摘要器用的模型 |
+| `LIFEOS_SUMMARY_RETRY_UNIT` | `2` | 摘要重試的退避單位秒數；第 i 趟失敗後睡 i×單位 |
+| `LIFEOS_INDEX_SKIP_WARN_EVERY` | `36` | 連續幾輪因「別人正在寫索引」而跳過後開始警告 |
+| `LIFEOS_INDEX_SKIP_COUNT_FILE` | `~/lifeos-memory/.checkpoints/index-skip.count` | 記連續跳過次數的計數檔 |
+| `LIFEOS_WATCH` | `auto` | 摘要器要監看哪些專案（`~/.claude/projects/` 下的目錄名） |
+| `LIFEOS_QMD_COLLECTION` | `memory` | qmd 索引名；設成空字串＝停用向量層 |
+| `LIFEOS_INJECT_CHAR_CAP` | `4000` | SessionStart hook 注入交接卡的字元預算（上限夾到 9700） |
+| `LIFEOS_CLAUDE_BIN` | `claude`（從 PATH 找） | `claw` 呼叫的 `claude` 執行檔路徑 |
 
 ### gen-handoff：選配資料源
 
@@ -353,15 +414,24 @@ claw            # 用 claw 代替 claude 開工作 session
 
 | 變數 | 用途 | 沒設的話 |
 |---|---|---|
+| `LIFEOS_HANDOFF_MODEL` | 產生交接卡用的模型（預設 `haiku`） | 用 `haiku` |
+| `HANDOFF_STALE_HOURS` | 交接檔放多久算過期（預設 `18` 小時） | `18` |
+| `LIFEOS_HANDOFF_SLIM` | 設 `1` 把條目回填整段移出交接卡，改寫到 `$LIFEOS_MEMORY_ROOT/state/entity-backfill/<proj>-latest.md` | `0`（段落留在交接卡裡）；旗標檔 `$LIFEOS_MEMORY_ROOT/state/handoff-slim.on` 同效 |
 | `LIFEOS_OWNER_LINE_ID` | 讓交接卡摘錄把你本人的 LINE 訊息標成「本人✓」 | 沒有人會被標成本人（fail-closed） |
 | `LIFEOS_LINE_PENDING_TOOL` | 被信任為 `<line_message>` 來源的 LINE 收訊工具全名（預設 `mcp__line__get_pending`） | 只認預設名稱；**如果你的 MCP 伺服器把收訊工具取成別的名字，所有真 LINE 訊息都會被靜默丟掉**——把 `LIFEOS_LINE_PENDING_TOOL` 設成它的實際名稱（例如 `mcp__myline__fetch_pending`） |
+| `LIFEOS_LINE_SEND_TOOLS` | 重複送出檢查認得的 LINE 送出工具名（逗號分隔；預設 `mcp__line__push,mcp__line__reply`） | 用預設值 |
 | `LIFEOS_TICKETS_DIR` | 收尾帳交叉核對（`status: closed` 的 `*.md`） | 預設 `$LIFEOS_MEMORY_ROOT/worktickets`；不存在就只列帳本行 |
 | `LIFEOS_WIKI_DIR` | 條目回填待辦段 | 整段跳過 |
-| `DREAM_DIR` | 最近一夢段（`*-dream.md`） | 整段跳過 |
+| `LIFEOS_WIKI_SUBDIRS` | 掃描條目回填時要看的 wiki 子目錄（預設 `entities,sources,concepts`） | 用預設值 |
+| `LIFEOS_WIKI_INDEX_FLOOR` | wiki 名冊至少要有幾個條目才可信（預設 `1`） | `1`——目錄存在且有條目就視為可信 |
+| `LIFEOS_TRANSCRIPT_DIRS` | 追加要掃的 transcript 目錄（冒號分隔，例如別的 config store） | 只掃本店 |
+| `LIFEOS_STORES_ROOT` | 其他 config store 的根目錄 | 只掃本店 |
 | `LIFEOS_EVENT_STREAM_DIR` | 在途快照 (d) 優先吃工具呼叫事件流 | 退回掃 transcript |
 | `LIFEOS_SESSION_REGISTRY` | slug → handoff 路徑對照（`sessions.json`） | 預設路徑 `$LIFEOS_MEMORY_ROOT/handoff/<proj>.md` |
+| `DREAM_DIR` | 最近一夢段（`*-dream.md`） | 整段跳過 |
+| `ALERT_INBOX` | 條目回填掃描要把告警寫進哪個檔 | 不寫告警檔（交接卡照印） |
 
-`feedback-to-pitfall.sh`（選配）把 Claude Code auto memory 裡 `type: feedback` 的檔升格成 `cards/pitfall/` 下的踩坑卡、在 `MEMORY.md` 加一行索引、再刪掉原檔；`--dry-run` 只預覽。
+`feedback-to-pitfall.sh`（選配）把 Claude Code auto memory 裡 `type: feedback` 的檔升格成 `cards/pitfall/` 下的踩坑卡、在 `MEMORY.md` 加一行索引、再刪掉原檔；`--dry-run` 只預覽。它的資料源用 `LIFEOS_FEEDBACK_DIR`（feedback 檔所在目錄；預設是目前專案的 auto memory 目錄）與 `LIFEOS_SOUL_FILE`（選配，要追加踩坑摘要的規則檔，例如你的常駐 `CLAUDE.md`；沒設就略過這步）設定。
 
 ## 記憶層 — 卸載
 
@@ -377,18 +447,18 @@ claw            # 用 claw 代替 claude 開工作 session
 - **連續重啟幾次之後停住**：這是防風暴煞車（60 秒內死 3 次就停），查 `~/lifeos-memory/.logs/` 再手動跑 `claw`
 - 其他狀況：開 issue，附上 `~/lifeos-memory/.logs/` 裡對應的 log
 
-## 造技能三件套 — 安裝
+## 造技能兩件套 — 安裝
 
-已經有 Claude Code 的話一分鐘裝完。把三個技能目錄放進 `~/.claude/skills/`：
+已經有 Claude Code 的話一分鐘裝完。把兩個技能目錄放進 `~/.claude/skills/`：
 
 ```bash
 mkdir -p ~/.claude/skills
-for s in doc-to-skill skill-author skill-vetting; do
+for s in skill-author skill-vetting; do
   cp -R "$s" ~/.claude/skills/
 done
 ```
 
-技能落在 `~/.claude/skills/<name>/`，Claude Code 啟動時自動發現，不用改設定。驗證方式：開一個 `claude` 對話，說「把這份文件變成一個 skill」，能觸發 `doc-to-skill` 就是裝好了。
+技能落在 `~/.claude/skills/<name>/`，Claude Code 啟動時自動發現，不用改設定。驗證方式：開一個 `claude` 對話，說「幫我從零做一個 XX skill」，能觸發 `skill-author` 就是裝好了。
 
 ## 全新 Mac 從零開始
 
@@ -437,6 +507,7 @@ claude
 
 ## 沿革
 
+- 2026-11-12：**公開版更新——把現役系統的記憶連續性修正搬進來**——斷頭緩衝（看門狗撞門檻後會先等當前這一輪收尾，最長 10 分鐘才殺）、摘要鎖與索引防撞、簡體重抽、中文召回（切詞後多查合併）、條目回填移出交接卡（開關預設關）、索引體積檢查、SessionStart 交接卡注入、技能兩件的修正（`skill-vetting` 退出碼與守衛、`skill-author` 去私有引用並新增 `failure-modes` 參考檔）、移除 doc-to-skill。
 - 2026-10-14：**`gen-handoff` 更新到現役版功能面（去識別）**——在途快照（已派出的背景任務、使用者最近委託、孤兒產物、動過的檔案）、本輪收尾帳、懸空委託偵測、條目回填待辦、最近一夢；輔助腳本搬進 `memory-harness/scripts/lib/`；新增 `feedback-to-pitfall.sh`；新增 36 項沙盒測試。
 - 2026-10-14：**配套 repo [memory-os](https://github.com/walkpod1007/memory-os) 公開**——夜間觀察筆記、`recall-router`、qmd 檢索。本 repo 的 10 分鐘摘要與召回 hook 標為已由它取代；踩坑卡、看門狗、交接、claw 留在這裡。
 - 2026-08-25：**推式記憶召回上架**——UserPromptSubmit hook 自動透過 qmd 檢索本機記憶庫並注入相關脈絡；同步 BM25 ＋ 背景向量雙層檢索、120 分鐘去重壓制、fail-safe 靜默降級。

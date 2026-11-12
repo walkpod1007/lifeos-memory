@@ -24,9 +24,133 @@ export MR_STATE="${MEMORY_RECALL_STATE:-$HOME/lifeos-memory/.recall-state}"
 export MR_SYNC_MIN="${MEMORY_RECALL_MIN:-0.3}"
 export MR_VEC_MIN="${MEMORY_RECALL_VEC_MIN:-0.48}"
 export MR_MAX="${MEMORY_RECALL_MAX:-3}"
+export MR_TERMS="${LIFEOS_RECALL_TERMS:-8}"
 
 python3 - <<'PY' 2>/dev/null || true
 import json, os, re, subprocess, sys, time
+
+# CJK (Han + kana) runs; qmd treats these as per-character phrases.
+CJK_RE = re.compile(u'[\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff]')
+CJK_RUN_RE = re.compile(u'[\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff]+')
+ASCII_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.\-]*[A-Za-z0-9]')
+# Function characters that carry no topic; they cut a run into content segments.
+STOP_CHARS = set(u'的了是在我你他她它們有和就也都要會嗎呢吧啊把被與或但而及這那個怎麼什不可以能對為於從到之請幫想些很還再又已將讓給用跟並且如何哪吶喔啦著過來去說做好較更最')
+
+def pick_even(items, k):
+    # Deterministic, evenly spaced pick that always includes first and last item.
+    n = len(items)
+    if k >= n:
+        return list(items)
+    if k <= 1:
+        return [items[0]]
+    return [items[i * (n - 1) // (k - 1)] for i in range(k)]
+
+def split_terms(text, limit):
+    # ASCII words stay as they are (at most half the slots); CJK runs are cut at
+    # stop characters, each content segment yields overlapping 2-char fragments
+    # (overlap so a fragment never straddles a word boundary by luck). Fragments
+    # are de-duplicated in order of appearance and picked evenly across the
+    # sentence, so the same prompt always gives the same terms and coverage is not
+    # biased to the start of the sentence.
+    ascii_terms, seen = [], set()
+    for m in ASCII_RE.finditer(text):
+        w = m.group(0)
+        if w.lower() not in seen:
+            seen.add(w.lower())
+            ascii_terms.append(w)
+    cjk = []
+    for run in CJK_RUN_RE.findall(text):
+        seg = ''
+        for ch in run + u'\0':
+            if ch in STOP_CHARS or ch == u'\0':
+                for i in range(len(seg) - 1):
+                    g = seg[i:i + 2]
+                    if g not in cjk:
+                        cjk.append(g)
+                seg = ''
+            else:
+                seg += ch
+    if not cjk:
+        # nothing but function characters: fall back to the raw runs (2-4 chars)
+        for run in CJK_RUN_RE.findall(text):
+            g = run[:4]
+            if len(g) >= 2 and g not in cjk:
+                cjk.append(g)
+    na = min(len(ascii_terms), limit // 2) if cjk else min(len(ascii_terms), limit)
+    terms = pick_even(ascii_terms, na) if na else []
+    terms += pick_even(cjk, limit - len(terms)) if cjk else []
+    return terms
+
+def multi_search(qmd_bin, terms, budget):
+    # One qmd process per term, all started together, shared deadline. A term that
+    # fails or is not finished by the deadline counts as no hits. Merge by file:
+    # more matching terms first, then higher score; the reported score is the best
+    # single-term score (same scale as a plain qmd search score).
+    if not terms:
+        return []
+    deadline = time.time() + budget
+    procs = []
+    for t in terms:
+        try:
+            procs.append(subprocess.Popen([qmd_bin, 'search', t, '-n', '5', '--json'],
+                                          stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                          stderr=subprocess.DEVNULL))
+        except Exception:
+            pass
+    results = {}
+    import threading
+    def reader(i, pr):
+        try:
+            results[i] = pr.stdout.read()
+        except Exception:
+            pass
+    threads = []
+    for i, pr in enumerate(procs):
+        th = threading.Thread(target=reader, args=(i, pr))
+        th.daemon = True
+        th.start()
+        threads.append(th)
+    for th in threads:
+        th.join(max(0.0, deadline - time.time()))
+    merged = {}
+    for i, pr in enumerate(procs):
+        try:
+            if pr.poll() is None:
+                pr.kill()
+                continue
+            if pr.returncode != 0 or i not in results:
+                continue
+            data = json.loads(results[i].decode('utf-8', 'replace'))
+        except Exception:
+            continue
+        if not isinstance(data, list):
+            continue
+        for x in data:
+            if not isinstance(x, dict):
+                continue
+            fp = str(x.get('file', ''))
+            try:
+                sc = float(x.get('score', 0))
+            except Exception:
+                continue
+            if not fp:
+                continue
+            cur = merged.get(fp)
+            if cur is None:
+                merged[fp] = [1, sc, x]
+            else:
+                cur[0] += 1
+                if sc > cur[1]:
+                    cur[1], cur[2] = sc, x
+    for pr in procs:
+        try:
+            if pr.poll() is None:
+                pr.kill()
+            pr.wait(timeout=0.2)
+        except Exception:
+            pass
+    ranked = sorted(merged.values(), key=lambda v: (-v[0], -v[1]))
+    return [v[2] for v in ranked[:5]]
 
 def main():
     try:
@@ -60,15 +184,26 @@ def main():
     pending = os.path.join(state, 'pending-vec.json')
     qmd_bin = os.environ.get('MR_QMD_BIN', 'qmd')
 
-    # 1. Sync layer: qmd search (2.5s hard timeout, timeout treated as no hits)
+    # 1. Sync layer: qmd search (2.5s hard timeout in total, timeout treated as no hits)
+    # Pure-ASCII prompt: one query with the raw text, exactly as before.
+    # Prompt containing CJK: qmd ANDs space-separated words and keeps a CJK run as one
+    # consecutive-character phrase, so a whole Chinese sentence never matches. We instead
+    # run several short queries in parallel (one term each) and merge them (see split_terms).
     sync_hits = []
     try:
-        cmd = [qmd_bin, 'search', query, '-n', '5', '--json']
-        r = subprocess.run(cmd, capture_output=True, timeout=2.5)
-        if r.returncode == 0 and r.stdout:
-            data = json.loads(r.stdout.decode('utf-8', 'replace'))
-            if isinstance(data, list):
-                sync_hits = data
+        if not CJK_RE.search(query):
+            cmd = [qmd_bin, 'search', query, '-n', '5', '--json']
+            r = subprocess.run(cmd, capture_output=True, timeout=2.5)
+            if r.returncode == 0 and r.stdout:
+                data = json.loads(r.stdout.decode('utf-8', 'replace'))
+                if isinstance(data, list):
+                    sync_hits = data
+        else:
+            try:
+                nterms = max(1, min(16, int(os.environ.get('MR_TERMS', 8))))
+            except Exception:
+                nterms = 8
+            sync_hits = multi_search(qmd_bin, split_terms(query, nterms), 2.5)
     except Exception:
         sync_hits = []
 

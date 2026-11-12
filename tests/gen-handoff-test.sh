@@ -359,5 +359,53 @@ env -i PATH="$PATH" HOME="$SB_J" LIFEOS_MEMORY_ROOT="$SB_J/mem" \
     bash "$SRC/gen-handoff.sh" "$TR_J" > "$SB/g8j.out" 2>&1
 check "G8j 巢狀 input.name 含工具名+tool_result 有 <line_message>：log 出現請設定 LIFEOS_LINE_PENDING_TOOL" "grep -q '請設定 LIFEOS_LINE_PENDING_TOOL' '$SB_J/mem/.logs/gen-handoff.log'"
 
+echo "— G9 條目回填移出交接卡（LIFEOS_HANDOFF_SLIM，預設關）—"
+# 每個子案例各用乾淨的記憶目錄；sandbox 本身可能不在 /tmp 下，輸出目錄覆寫要放 /tmp
+eb_block() { sed -n '/<!-- entity-backfill-start -->/,/<!-- entity-backfill-end -->/p' "$1"; }
+run_slim() {  # run_slim <記憶目錄> [額外 env…]
+    local m="$1"; shift
+    env HOME="$HOME_SB" CLAUDE_HOME="$HOME_SB/.claude" LIFEOS_MEMORY_ROOT="$m" PATH="$SB/bin:$PATH" \
+        LIFEOS_OWNER_LINE_ID="$OWNER" DREAM_DIR="$SB/dream" LIFEOS_WIKI_DIR="$SB/wiki" "$@" \
+        bash "$SRC/gen-handoff.sh" "$TR" > "$SB/g9.out" 2>&1
+}
+# 對照組：SLIM 關（預設）
+M9A="$SB/m9a"; mkdir -p "$M9A/daily/$DATE"; cp "$MEM/daily/$DATE/closeout-myproj.md" "$M9A/daily/$DATE/"
+run_slim "$M9A"
+check "G9 SLIM 關：不產生 entity-backfill 目錄" "[[ ! -e '$M9A/state/entity-backfill' ]]"
+check "G9 SLIM 關：卡內有完整回填段（含 ① 小節）" "eb_block '$M9A/handoff/myproj.md' | grep -q '### ①'"
+check "G9 SLIM 關：回填段與預設行為同（等同未設旗標）" "run_slim '$SB/m9a2' LIFEOS_HANDOFF_SLIM=0; [[ \$(eb_block '$SB/m9a2/handoff/myproj.md' | wc -c) -eq \$(eb_block '$M9A/handoff/myproj.md' | wc -c) ]] && cmp -s <(eb_block '$SB/m9a2/handoff/myproj.md') <(eb_block '$M9A/handoff/myproj.md')"
+# SLIM 開（環境變數）
+M9B="$SB/m9b"; OUTB="$(mktemp -d /tmp/gh-slim-XXXXXX)"
+run_slim "$M9B" LIFEOS_HANDOFF_SLIM=1 GEN_HANDOFF_TEST=1 ENTITY_BACKFILL_OUT_DIR="$OUTB"
+HB="$M9B/handoff/myproj.md"; LB="$OUTB/myproj-latest.md"
+check "G9 SLIM 開：卡內只剩指路兩行（無 ① 小節）" "! eb_block '$HB' | grep -q '### ①' && eb_block '$HB' | grep -q '^## 今日條目回填待辦' && eb_block '$HB' | grep -q '條目回填候選 [0-9?]* 筆、積壓 [0-9?]* 筆：state/entity-backfill/myproj-latest.md'"
+check "G9 SLIM 開：哨兵標記仍成對" "[[ \$(grep -c '<!-- entity-backfill-start -->' '$HB') -eq 1 && \$(grep -c '<!-- entity-backfill-end -->' '$HB') -eq 1 ]]"
+check "G9 SLIM 開：latest.md 含完整段與標記" "[[ -s '$LB' ]] && head -1 '$LB' | grep -q 'entity-backfill-start' && grep -q 'entity-backfill-end' '$LB' && grep -q '### ①' '$LB'"
+check "G9 SLIM 開：latest.md 內容 = SLIM 關時卡內完整段" "[[ \"\$(cat '$LB')\" == \"\$(eb_block '$M9A/handoff/myproj.md')\" ]]"
+check "G9 SLIM 開：N 筆與完整段的候選數一致" "N=\$(grep -o '回填候選 [0-9]* 筆' '$LB' | grep -o '[0-9]*'); C=\$(grep -o '建卡候選 [0-9]* 筆' '$LB' | grep -o '[0-9]*'); [[ \$((N + \${C:-0})) -eq \$(eb_block '$HB' | grep -o '條目回填候選 [0-9]*' | grep -o '[0-9]*') ]]"
+# 旗標檔也能開
+M9C="$SB/m9c"; mkdir -p "$M9C/state"; : > "$M9C/state/handoff-slim.on"
+run_slim "$M9C"
+check "G9 SLIM 旗標檔：不設環境變數也啟用，寫到 \$MEMORY_ROOT/state/entity-backfill/" "[[ -s '$M9C/state/entity-backfill/myproj-latest.md' ]] && ! eb_block '$M9C/handoff/myproj.md' | grep -q '### ①'"
+# 輸出目錄覆寫只在測試閘 + /tmp 下生效
+M9D="$SB/m9d"; run_slim "$M9D" LIFEOS_HANDOFF_SLIM=1 ENTITY_BACKFILL_OUT_DIR=/tmp/gh-slim-evil-$$
+check "G9 沒開測試閘：ENTITY_BACKFILL_OUT_DIR 被忽略（寫回記憶根目錄）" "[[ ! -e /tmp/gh-slim-evil-$$ && -s '$M9D/state/entity-backfill/myproj-latest.md' ]]"
+M9E="$SB/m9e"; run_slim "$M9E" LIFEOS_HANDOFF_SLIM=1 GEN_HANDOFF_TEST=1 ENTITY_BACKFILL_OUT_DIR="$SB/not-under-tmp"
+check "G9 測試閘開但不在 /tmp 下：被忽略並留 WARN" "[[ ! -e '$SB/not-under-tmp' ]] && grep -q 'ENTITY_BACKFILL_OUT_DIR' '$M9E/.logs/gen-handoff-detail.log'"
+# latest.md 目錄不可寫 → 整段留卡內並 log
+M9F="$SB/m9f"; OUTF="$(mktemp -d /tmp/gh-slim-ro-XXXXXX)"; chmod 555 "$OUTF"
+run_slim "$M9F" LIFEOS_HANDOFF_SLIM=1 GEN_HANDOFF_TEST=1 ENTITY_BACKFILL_OUT_DIR="$OUTF/sub"
+if [[ -w "$OUTF" ]]; then   # root 或不守權限的檔案系統：不可寫情境造不出來
+    ok "G9 latest.md 目錄不可寫（此環境無法造出唯讀目錄，略過）"
+else
+    check "G9 latest.md 目錄不可寫：整段留在交接卡" "eb_block '$M9F/handoff/myproj.md' | grep -q '### ①'"
+    check "G9 latest.md 目錄不可寫：log 留說明" "grep -q 'latest.md 寫入失敗' '$M9F/.logs/gen-handoff-detail.log'"
+fi
+chmod 755 "$OUTF"; rm -rf "$OUTF" "$OUTB"
+# 冪等（SLIM 開）：同一份 handoff 重跑兩次，哨兵不增生
+for _r in 1 2; do run_slim "$M9C"; done
+check "G9 冪等：SLIM 開重跑兩次，回填哨兵仍只有一份" "[[ \$(grep -c '<!-- entity-backfill-start -->' '$M9C/handoff/myproj.md') -eq 1 && \$(grep -c '<!-- entity-backfill-end -->' '$M9C/handoff/myproj.md') -eq 1 ]]"
+check "G9 冪等：SLIM 開重跑後卡內仍是兩行指路" "! eb_block '$M9C/handoff/myproj.md' | grep -q '### ①'"
+
 echo; echo "RESULT: PASS=$PASS FAIL=$FAIL"
 [[ $FAIL -eq 0 ]]

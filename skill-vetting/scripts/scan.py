@@ -62,7 +62,7 @@ class SkillScanner:
             (r'(?:^|\n)#.*(?:system|assistant|user):', 'role manipulation in comments', 'MEDIUM'),
             # v1.1.0: Social engineering targeting AI reviewers
             (r'(?i)(?:pre-?approved|false.positiv|classify.*(?:safe|clean)|ignore.*(?:warning|finding|scanner))', 'social engineering: override attempt', 'CRITICAL'),
-            (r'(?i)(?:AI|LLM|assistant|agent|reviewer|GPT|Claude).*(?:must|should|instruction|authorized|approved)', 'social engineering: addressing AI reviewer', 'CRITICAL'),
+            (r'(?i)(?<![A-Za-z])(?:AI|LLM|assistant|agent|reviewer|GPT|Claude).*(?:must|should|instruction|authorized|approved)', 'social engineering: addressing AI reviewer', 'CRITICAL'),
             (r'(?i)(?:CRITICAL|IMPORTANT|URGENT).*(?:INSTRUCTION|NOTE|MESSAGE).*(?:FOR|TO).*(?:AI|REVIEW|AGENT|ASSISTANT)', 'social engineering: fake directive', 'CRITICAL'),
             (r'(?i)disregard.*(?:previous|above|prior|earlier)', 'prompt injection: instruction override', 'CRITICAL'),
             # Invisible unicode characters (zero-width spaces, etc.)
@@ -85,7 +85,9 @@ class SkillScanner:
             if file_path.is_file() and self._is_text_file(file_path):
                 self._scan_file(file_path)
 
-        return self.findings, 0 if len(self.findings) == 0 else 1
+        # 只有 CRITICAL／HIGH 才回 1，MEDIUM／LOW／INFO 照樣印進報告但退出碼 0
+        blocking = any(f.get('severity') in ('CRITICAL', 'HIGH') for f in self.findings)
+        return self.findings, 1 if blocking else 0
 
     def _is_text_file(self, path: Path) -> bool:
         """Check if file is likely a text file - scan everything except known binaries"""

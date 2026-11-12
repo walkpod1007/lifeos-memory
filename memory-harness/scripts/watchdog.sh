@@ -13,6 +13,10 @@
 #   LIFEOS_TOKEN_THRESHOLD  觸發門檻，預設 150000（context 撞牆前留足收尾空間）
 #   LIFEOS_MEMORY_ROOT      記憶根目錄，預設 ~/lifeos-memory
 #   CLAUDE_HOME             Claude Code 設定目錄，預設 ~/.claude
+#   LIFEOS_WRAP_POLL_SECS   斷頭緩衝：多久檢查一次，預設 15（秒）
+#   LIFEOS_WRAP_QUIET_SECS  斷頭緩衝：transcript 靜止多久才算輪與輪之間，預設 60（秒）
+#   LIFEOS_WRAP_MAX_WAIT    斷頭緩衝：最長等多久，撞頂照殺，預設 600（秒）
+#   （三個值都過消毒：空、非純數字、0、超過 5 位數一律回預設）
 #
 # 設計筆記（來自母系統的實戰教訓）：
 # - 不用 set -e/pipefail：監控迴圈靠顯式 if-else 處理錯誤，
@@ -37,6 +41,21 @@ KILL_GRACE_SECS=10       # TERM 之後等這麼久再 KILL
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GEN_HANDOFF="$SCRIPT_DIR/gen-handoff.sh"
+
+# ── 斷頭緩衝參數消毒（必須在任何使用點之前；set -u 下垃圾環境值會在算術展開炸死整條狗）──
+# 規則：非純數字／空／0／超過 5 位數 → 回預設；10# 強制十進位（防 08 被當八進位）
+wrap_sanitize() {
+    local v="${1:-}" d="$2"
+    case "$v" in ''|*[!0-9]*) echo "$d"; return;; esac
+    [ "${#v}" -gt 5 ] && { echo "$d"; return; }
+    v=$((10#$v))
+    [ "$v" -le 0 ] && v="$d"
+    echo "$v"
+}
+WRAP_MAX_WAIT=$(wrap_sanitize "${LIFEOS_WRAP_MAX_WAIT:-}" 600)
+WRAP_QUIET_SECS=$(wrap_sanitize "${LIFEOS_WRAP_QUIET_SECS:-}" 60)
+WRAP_POLL_SECS=$(wrap_sanitize "${LIFEOS_WRAP_POLL_SECS:-}" 15)
+[ "$WRAP_POLL_SECS" -gt "$WRAP_MAX_WAIT" ] && WRAP_POLL_SECS="$WRAP_MAX_WAIT"
 
 LOG="$MEMORY_ROOT/.logs/watchdog-${SESSION_NAME}.log"
 LOCK_DIR="$MEMORY_ROOT/.watchdog-${SESSION_NAME}.triggered.lock.d"
@@ -74,6 +93,7 @@ fi
 
 log "啟動：專案=$PROJECT_CWD 門檻=$THRESHOLD supervisor=$SUPERVISOR_PID lstart=[$SUP_LSTART]"
 log "監看目錄：$PROJ_DIR"
+log "斷頭緩衝參數：poll=${WRAP_POLL_SECS}s quiet=${WRAP_QUIET_SECS}s max=${WRAP_MAX_WAIT}s"
 
 # 找要殺的 claude：首選 claw 寫的 pidfile（npm 版 claude 進程名是 node，
 # pgrep -x claude 認不出）；沒 pidfile 再退回掃 supervisor 直接子進程
@@ -90,6 +110,82 @@ get_claude_pid() {
         return 0
     done
     return 1
+}
+
+# ps etime（[[dd-]hh:]mm:ss）→ 秒；解析不了回 999999（當成很老，不算年輕子行程）
+etime_to_secs() {
+    local e="${1:-}" d=0 h=0 m=0 s=0 rest a b c
+    case "$e" in *[!0-9:-]*|'') echo 999999; return;; esac
+    if [[ "$e" == *-* ]]; then d="${e%%-*}"; rest="${e#*-}"; else rest="$e"; fi
+    IFS=: read -r a b c <<< "$rest"
+    if [[ -n "${c:-}" ]]; then h=$a; m=$b; s=$c
+    elif [[ -n "${b:-}" ]]; then m=$a; s=$b
+    else s=$a; fi
+    case "$d$h$m$s" in *[!0-9]*) echo 999999; return;; esac
+    echo $(( 10#$d*86400 + 10#$h*3600 + 10#$m*60 + 10#$s ))
+}
+
+# claude 是否有「進行中 tool 工作」跡象：年輕子／孫行程（etime<600s）或有 CPU 的子行程。
+# 長跑前景指令期間 transcript 可能長時間不動，這層防誤殺。
+# 長駐 MCP server 子行程（老＋0 CPU）天然被過濾；判不準時方向一律是「不殺」。
+has_active_tool_work() {
+    local pid="$1" k et secs pcpu gk
+    for k in $(pgrep -P "$pid" 2>/dev/null || true); do
+        et=$(ps -p "$k" -o etime= 2>/dev/null | tr -d ' ')
+        secs=$(etime_to_secs "$et")
+        [ "$secs" -lt 600 ] && return 0
+        pcpu=$(ps -p "$k" -o pcpu= 2>/dev/null | tr -d ' ' | cut -d. -f1)
+        case "$pcpu" in ''|*[!0-9]*) pcpu=0;; esac
+        [ "$pcpu" -ge 1 ] && return 0
+        for gk in $(pgrep -P "$k" 2>/dev/null || true); do
+            et=$(ps -p "$gk" -o etime= 2>/dev/null | tr -d ' ')
+            secs=$(etime_to_secs "$et")
+            [ "$secs" -lt 600 ] && return 0
+        done
+    done
+    return 1
+}
+
+# 斷頭緩衝：撞門檻後、寫 handoff 前，等 session 走到輪與輪之間再動刀。
+# 放行條件：transcript 靜止 ≥ WRAP_QUIET_SECS 且 claude 沒有活躍子行程。
+# 最長 WRAP_MAX_WAIT 秒，撞頂照殺（不能無限等，否則狗形同虛設）。
+# stat 失敗＝判不準，保守視為輪中多等一輪（不 fail-open）。
+# 回傳 0＝放行（靜止）、1＝撞頂、2＝claude 已不在（不必等）。
+wrap_up_buffer() {
+    local transcript="$1" cpid="$2" start now deadline t_mtime t_age busy
+    start=$(date +%s)
+    deadline=$(( start + WRAP_MAX_WAIT ))
+    while :; do
+        now=$(date +%s)
+        busy=0
+        t_mtime=$(stat -f %m "$transcript" 2>/dev/null || stat -c %Y "$transcript" 2>/dev/null || echo "")
+        case "$t_mtime" in
+            ''|*[!0-9]*)
+                log "斷頭緩衝：stat transcript 失敗，保守視為輪中"
+                busy=1
+                ;;
+            *)
+                t_age=$(( now - t_mtime ))
+                [ "$t_age" -lt "$WRAP_QUIET_SECS" ] && busy=1
+                ;;
+        esac
+        if [[ -n "$cpid" ]] && ! kill -0 "$cpid" 2>/dev/null; then
+            log "斷頭緩衝：claude PID=$cpid 已不在，停止等待"
+            return 2
+        fi
+        if [ "$busy" -eq 0 ] && [[ -n "$cpid" ]] && has_active_tool_work "$cpid"; then
+            busy=1
+        fi
+        if [ "$busy" -eq 0 ]; then
+            log "斷頭緩衝：已靜止（等了 $(( now - start ))s），放行收尾"
+            return 0
+        fi
+        if [ "$now" -ge "$deadline" ]; then
+            log "斷頭緩衝：撞頂 ${WRAP_MAX_WAIT}s 仍在輪中，照殺"
+            return 1
+        fi
+        sleep "$WRAP_POLL_SECS"
+    done
 }
 
 while true; do
@@ -167,6 +263,10 @@ PYEOF
     echo $$ > "$LOCK_DIR/pid"
 
     log "⚠️ 觸發：${CURRENT_TOKENS} >= ${THRESHOLD}，開始收尾"
+
+    # Step 0: 斷頭緩衝（持觸發鎖等待，期間不會重入）
+    _wrap_cpid=$(get_claude_pid || true)
+    wrap_up_buffer "$PINNED_JSONL" "${_wrap_cpid:-}"
 
     # Step 1: 寫 handoff（記憶先落地，之後才准殺進程）
     if [[ -f "$GEN_HANDOFF" ]]; then
